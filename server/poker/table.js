@@ -337,12 +337,12 @@ class PokerTable {
     if (!seats.length) return null;
     let pos = seats.indexOf(seat);
     if (pos < 0) pos = 0;
-    for (let k = 1; k <= seats.length; k++) {
+    for (let k = 0; k < seats.length; k++) {
       const s = seats[(pos + k) % seats.length];
       const p = this.getPlayerBySeat(s);
       if (!p || p.folded || p.allIn) continue;
       if (p.betStreet < this.currentBet) return s;
-      if (this.currentBet === 0 && !this.actedThisStreet.has(p.id)) return s;
+      if (!this.actedThisStreet.has(p.id)) return s;
     }
     return null;
   }
