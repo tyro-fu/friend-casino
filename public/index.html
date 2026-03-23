@@ -49,20 +49,7 @@
       <p v-else class="hint">暂无记录，完成一局后自动累计。</p>
       <button type="button" class="secondary" @click="loadLb">刷新榜单</button>
     </div>
-    <p class="hint"><a href="#" @click.prevent="guide=true">新手引导</a> · 推荐使用 Chrome / Firefox / Edge，支持手机浏览器横竖屏访问。</p>
-    <div class="modal-mask" v-if="guide" @click.self="guide=false">
-      <div class="modal">
-        <button type="button" class="close" @click="guide=false">✕</button>
-        <h2>基本规则与操作</h2>
-        <ul class="hint" style="padding-left:18px;margin:0;color:var(--text)">
-          <li>每人发两张底牌，共用五张公共牌，用 7 张里最好的 5 张比大小。</li>
-          <li>轮到你时可：弃牌、过牌（无人下注时）、跟注、下注/加注（受「每轮下注上限」约束）。</li>
-          <li>积分规则由服务器 <code>config/game.json</code> 配置；默认大盲 10、每轮上限 100。</li>
-          <li>房主点击「开始一手」发牌；单桌最多 9 人，适合朋友私下娱乐。</li>
-        </ul>
-        <button type="button" @click="guide=false">知道了</button>
-      </div>
-    </div>
+    <p class="hint">推荐使用 Chrome / Firefox / Edge，支持手机浏览器横竖屏访问。</p>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.min.js"></script>
   <script>
@@ -81,8 +68,7 @@
       joinPassword: '',
       buyIn: '',
       buyInJoin: '',
-      lb: [],
-      guide: false
+      lb: []
     },
     mounted() {
       fetch('/api/config').then(r => r.json()).then(c => { if (c.gameName) this.gameName = c.gameName; document.title = c.gameName; }).catch(() => {});
