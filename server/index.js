@@ -78,11 +78,17 @@ function scheduleAutoStart(room, seconds) {
     room.autoStartCountdown--;
     if (room.autoStartCountdown <= 0) {
       clearAutoStart(room);
-      if (room.table.canStartHand() && room.table.phase === 'lobby' && !room.gameEnded) {
-        const res = room.table.startHand();
-        if (res.ok) {
-          R.pushState(room);
-          checkHandEnd(room);
+      if (room.table.phase === 'lobby' && !room.gameEnded) {
+        if (room.table.canStartHand(false)) {
+          const res = room.table.startHand(false);
+          if (res.ok) {
+            R.pushState(room);
+            checkHandEnd(room);
+          } else {
+            R.pushState(room);
+          }
+        } else if (room.table.canStartHand(true)) {
+          scheduleAutoStart(room, 5);
         } else {
           R.pushState(room);
         }
@@ -217,13 +223,32 @@ wss.on('connection', (ws) => {
           R.send(ws, { type: 'error', message: '仅房主可开局' });
           return;
         }
-        const res = room.table.startHand();
+        const res = room.table.startHand(true);
         if (!res.ok) {
           R.send(ws, { type: 'error', message: res.error });
           return;
         }
         R.pushState(room);
         checkHandEnd(room);
+        return;
+      }
+      if (type === 'rebuy') {
+        const raw = msg.buyIn;
+        if (raw === undefined || raw === null || raw === '') {
+          R.send(ws, { type: 'error', message: '请填写买入积分' });
+          return;
+        }
+        const n = Math.floor(Number(raw));
+        if (!Number.isFinite(n) || n < 200) {
+          R.send(ws, { type: 'error', message: '买入须为不少于 200 的整数' });
+          return;
+        }
+        const res = room.table.rebuy(playerId, n);
+        if (!res.ok) {
+          R.send(ws, { type: 'error', message: res.error });
+          return;
+        }
+        R.pushState(room);
         return;
       }
       if (type === 'action') {

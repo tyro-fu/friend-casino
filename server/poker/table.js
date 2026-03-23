@@ -103,6 +103,7 @@ class PokerTable {
       chips,
       holeCards: [],
       folded: false,
+      spectating: false,
       allIn: false,
       betStreet: 0,
       totalBetHand: 0,
@@ -112,6 +113,20 @@ class PokerTable {
     this.seats[seat] = playerId;
     this.sessionBuyIns.set(playerId, (this.sessionBuyIns.get(playerId) || 0) + chips);
     return { ok: true, seat };
+  }
+
+  rebuy(playerId, amount) {
+    if (this.phase !== 'lobby') return { ok: false, error: '仅在局间可买入' };
+    const p = this.players.get(playerId);
+    if (!p) return { ok: false, error: '未在房间内' };
+    if (!p.connected) return { ok: false, error: '请保持在线' };
+    if (this.seats[p.seat] !== playerId) return { ok: false, error: '座位异常' };
+    const n = Math.floor(Number(amount));
+    if (!Number.isFinite(n) || n < 200) return { ok: false, error: '买入须为不少于 200 的整数' };
+    const add = Math.min(n, Number.MAX_SAFE_INTEGER);
+    p.chips += add;
+    this.sessionBuyIns.set(playerId, (this.sessionBuyIns.get(playerId) || 0) + add);
+    return { ok: true };
   }
 
   removePlayer(playerId) {
@@ -136,14 +151,34 @@ class PokerTable {
     }
   }
 
-  canStartHand() {
-    const withChips = [...this.players.values()].filter((p) => p.chips > 0 && p.connected);
-    return withChips.length >= this.scoring.minPlayersToStart;
+  hasSeatedConnectedZeroChips() {
+    for (const p of this.players.values()) {
+      if (!p.connected) continue;
+      if (this.seats[p.seat] !== p.id) continue;
+      if (p.chips === 0) return true;
+    }
+    return false;
   }
 
-  startHand() {
+  canStartHand(relaxedSpectators) {
+    const withChips = [...this.players.values()].filter((p) => p.chips > 0 && p.connected);
+    if (withChips.length < this.scoring.minPlayersToStart) return false;
+    if (!relaxedSpectators && this.hasSeatedConnectedZeroChips()) return false;
+    return true;
+  }
+
+  startHand(relaxedSpectators) {
     if (this.phase !== 'lobby') return { ok: false, error: '牌局进行中' };
-    if (!this.canStartHand()) return { ok: false, error: '人数或筹码不足' };
+    if (!this.canStartHand(!!relaxedSpectators)) {
+      const withChips = [...this.players.values()].filter((p) => p.chips > 0 && p.connected);
+      if (withChips.length < this.scoring.minPlayersToStart) {
+        return { ok: false, error: '人数或筹码不足' };
+      }
+      if (!relaxedSpectators) {
+        return { ok: false, error: '有玩家积分为0，需先局内买入；房主也可强制开局（零分玩家本局观战）' };
+      }
+      return { ok: false, error: '人数或筹码不足' };
+    }
     this.lastShowdown = null;
     this.winnersLastHand = [];
     this.lastHandRecord = null;
@@ -172,7 +207,8 @@ class PokerTable {
     for (const id of this.players.keys()) {
       const p = this.players.get(id);
       p.holeCards = [];
-      p.folded = !inHand.includes(id) || p.chips <= 0;
+      p.spectating = !inHand.includes(id) && p.chips <= 0;
+      p.folded = !inHand.includes(id);
       p.allIn = false;
       p.betStreet = 0;
       p.totalBetHand = 0;
@@ -524,6 +560,7 @@ class PokerTable {
       p.betStreet = 0;
       p.totalBetHand = 0;
       p.folded = false;
+      p.spectating = false;
       p.allIn = false;
     }
     this.handContributions.clear();
@@ -646,6 +683,7 @@ class PokerTable {
         chips: p.chips,
         betStreet: p.betStreet,
         folded: p.folded,
+        spectating: !!p.spectating,
         allIn: p.allIn,
         connected: p.connected,
         isYou: p.id === forPlayerId,
@@ -670,7 +708,16 @@ class PokerTable {
       lastShowdown: this.lastShowdown,
       lastHandRecord: this.lastHandRecordFor(forPlayerId),
       handNumber: this.handNumber,
-      sessionStats: this.getSessionStats()
+      sessionStats: this.getSessionStats(),
+      buyInWait: (() => {
+        const nicknames = [];
+        for (const p of this.players.values()) {
+          if (!p.connected) continue;
+          if (this.seats[p.seat] !== p.id) continue;
+          if (p.chips === 0) nicknames.push(p.nickname);
+        }
+        return { count: nicknames.length, nicknames };
+      })()
     };
   }
 

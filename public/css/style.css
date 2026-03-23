@@ -110,6 +110,11 @@ button.danger { background: linear-gradient(180deg, #c0392b, #a93226); }
   animation: pulse 1s ease-in-out infinite;
 }
 .table-hint { font-size: .8rem; color: var(--muted); }
+.table-hint.warn-hint { color: #e67e22; font-weight: 600; }
+.rebuy-card { padding: 10px 14px; }
+.rebuy-title { font-weight: 700; margin-bottom: 4px; font-size: .95rem; }
+.rebuy-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rebuy-input { flex: 1; min-width: 120px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: inherit; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
 /* ===== 座位 ===== */
 .seat {
@@ -134,6 +139,7 @@ button.danger { background: linear-gradient(180deg, #c0392b, #a93226); }
   box-shadow: 0 0 10px rgba(241,196,15,.4);
 }
 .seat-box.is-folded { opacity: .45; }
+.seat-box.is-spectating { box-shadow: 0 0 0 2px rgba(92,107,192,.85); opacity: 1; }
 .seat-box.is-offline { opacity: .35; }
 .dealer-badge {
   position: absolute; top: -8px; right: -8px;
@@ -179,6 +185,7 @@ button.danger { background: linear-gradient(180deg, #c0392b, #a93226); }
   display: inline-block; margin-top: 1px;
 }
 .status-badge.allin { background: var(--danger); color: #fff; }
+.status-badge.spectate { background: #5c6bc0; color: #fff; }
 /* ===== 上局结果 ===== */
 .result-card { padding: 10px 14px; }
 .result-header {

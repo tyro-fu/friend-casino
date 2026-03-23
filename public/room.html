@@ -54,6 +54,9 @@
           <div v-if="state.phase === 'playing'" class="street-tag">{{ streetLabel }} · 当前注 {{ state.currentBet || 0 }}</div>
           <div v-if="state.autoStartCountdown > 0" class="countdown-tag">下一局 {{ state.autoStartCountdown }}s</div>
           <div v-if="state.phase === 'lobby' && !state.gameEnded && state.handNumber === 0" class="table-hint">等待房主开始游戏</div>
+          <div v-if="state.phase === 'lobby' && !state.gameEnded && state.handNumber > 0 && state.buyInWait && state.buyInWait.count > 0" class="table-hint warn-hint">
+            {{ state.buyInWait.count }} 人积分为0，须局内买入后自动开局；房主可强制开局使其观战
+          </div>
         </div>
         <!-- 座位 -->
         <div v-for="p in tablePlayers" :key="p.id"
@@ -61,7 +64,8 @@
           :class="{'seat-you': p.isYou}">
           <div class="seat-box" :class="{
             'is-actor': state.phase === 'playing' && p.seat === state.actorSeat,
-            'is-folded': p.folded && state.phase === 'playing',
+            'is-folded': p.folded && state.phase === 'playing' && !p.spectating,
+            'is-spectating': state.phase === 'playing' && p.spectating,
             'is-offline': p.connected === false
           }">
             <div class="dealer-badge" v-if="p.seat === state.dealerSeat">D</div>
@@ -73,6 +77,7 @@
             </div>
             <div v-if="p.betStreet > 0 && state.phase === 'playing'" class="seat-bet">下注 {{ p.betStreet }}</div>
             <div v-if="p.allIn && state.phase === 'playing'" class="status-badge allin">ALL IN</div>
+            <div v-if="p.spectating && state.phase === 'playing'" class="status-badge spectate">观战</div>
           </div>
         </div>
       </div>
@@ -100,6 +105,14 @@
               <span class="dp-delta" :class="{'profit': dp.chipChange > 0, 'loss': dp.chipChange < 0}">{{ dp.chipChange > 0 ? '+' : '' }}{{ dp.chipChange }}</span>
             </div>
           </div>
+        </div>
+      </div>
+      <div class="card rebuy-card" v-if="state.phase === 'lobby' && !state.gameEnded && myPlayer && myPlayer.chips === 0">
+        <div class="rebuy-title">局内买入</div>
+        <p class="hint" style="margin:0 0 8px">积分已清零，买入≥200 后可参与下一局自动开局；若房主强制开局，本局仅观战。</p>
+        <div class="rebuy-row">
+          <input v-model.trim="rebuyBuyIn" inputmode="numeric" class="rebuy-input" placeholder="买入积分">
+          <button type="button" class="act-btn primary" @click="sendRebuy">确认买入</button>
         </div>
       </div>
       <!-- 操作区 -->
@@ -253,7 +266,8 @@
       joinBuyIn: '',
       roomCode: '',
       playerId: pid(),
-      state: { phase: 'lobby', players: [], pot: 0, board: [], scoring: {}, sessionStats: [], autoStartCountdown: 0, scheduledEndHands: null, gameEnded: false, handNumber: 0 },
+      state: { phase: 'lobby', players: [], pot: 0, board: [], scoring: {}, sessionStats: [], autoStartCountdown: 0, scheduledEndHands: null, gameEnded: false, handNumber: 0, buyInWait: { count: 0, nicknames: [] } },
+      rebuyBuyIn: '',
       isHost: false,
       raiseTo: 0,
       toast: '',
@@ -395,6 +409,12 @@
         this.ws.send(JSON.stringify({ type: 'action', action, raiseTo }));
       },
       startHand() { this.ws.send(JSON.stringify({ type: 'startHand' })); },
+      sendRebuy() {
+        const jb = typeof this.rebuyBuyIn === 'string' ? this.rebuyBuyIn.trim() : '';
+        if (!jb) { this.showToast('请填写买入积分'); return; }
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { this.showToast('未连接'); return; }
+        this.ws.send(JSON.stringify({ type: 'rebuy', buyIn: jb }));
+      },
       ping() {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
