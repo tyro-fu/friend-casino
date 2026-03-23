@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>牌桌</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -32,71 +32,198 @@
       <p>正在连接服务器…</p>
     </div>
     <template v-else-if="inRoom">
-      <div class="card">
-        <p>房间号：<strong>{{ roomCode || '—' }}</strong></p>
-        <p class="hint">分享链接：<input readonly :value="fullShare" @focus="$event.target.select()" style="margin-top:6px"></p>
-        <p class="hint" v-if="isHost">好友打开链接后需在页面填写房间密码（若已设置）。</p>
-        <p class="hint" v-if="isHost">你是房主，人满后可点「开始一手」。</p>
+      <!-- 房间信息栏 -->
+      <div class="room-bar">
+        <span class="room-code">房间 {{ roomCode }}</span>
+        <span v-if="state.handNumber > 0" class="hand-num">第{{ state.handNumber }}手</span>
+        <span v-if="state.scheduledEndHands != null && state.scheduledEndHands > 0" class="schedule-tag">还剩{{ state.scheduledEndHands }}局</span>
+        <span class="share-btn" @click="copyShare" title="复制分享链接">📋</span>
       </div>
-      <div class="table-view">
-        <div class="pot">底池：{{ state.pot || 0 }} · 街：{{ streetLabel }} · 当前注：{{ state.currentBet || 0 }}</div>
-        <div class="board">
-          <span v-for="(c,i) in boardDisplay" :key="'b'+i" class="card-p" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
-          <span v-if="!boardDisplay.length" class="hint">公共牌未发出</span>
+      <!-- 牌桌区域 -->
+      <div class="table-area">
+        <div class="table-felt"></div>
+        <!-- 牌桌中心信息 -->
+        <div class="table-center">
+          <div class="pot-display" v-if="state.phase === 'playing'">
+            <span class="pot-label">底池</span>
+            <span class="pot-value">{{ state.pot || 0 }}</span>
+          </div>
+          <div class="board-cards">
+            <span v-for="(c,i) in boardDisplay" :key="'b'+i" class="card-b" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
+          </div>
+          <div v-if="state.phase === 'playing'" class="street-tag">{{ streetLabel }} · 当前注 {{ state.currentBet || 0 }}</div>
+          <div v-if="state.autoStartCountdown > 0" class="countdown-tag">下一局 {{ state.autoStartCountdown }}s</div>
+          <div v-if="state.phase === 'lobby' && !state.gameEnded && state.handNumber === 0" class="table-hint">等待房主开始游戏</div>
         </div>
-        <div class="players">
-          <div v-for="p in orderedPlayers" :key="p.id" class="pseat" :class="{actor:p.seat===state.actorSeat, dealer:p.seat===state.dealerSeat}">
-            <div class="nm">{{ p.nickname }}{{ p.isYou?'（你）':'' }}{{ p.connected===false?' · 离线':'' }}</div>
-            <div class="ch">筹码 {{ p.chips }} · 本轮已下 {{ p.betStreet }}{{ p.folded?' · 弃牌':'' }}{{ p.allIn?' · 全下':'' }}</div>
-            <div style="margin-top:4px;display:flex;gap:4px">
-              <span v-for="(c,j) in p.cards" :key="j" class="card-p" :class="{red:c&&!c.hidden&&isRed(c),hidden:c&&c.hidden}">{{ c&&c.hidden?'?':fmtCard(c) }}</span>
+        <!-- 座位 -->
+        <div v-for="p in tablePlayers" :key="p.id"
+          class="seat" :style="seatStyle(p.displayIndex, tablePlayers.length)"
+          :class="{'seat-you': p.isYou}">
+          <div class="seat-box" :class="{
+            'is-actor': state.phase === 'playing' && p.seat === state.actorSeat,
+            'is-folded': p.folded && state.phase === 'playing',
+            'is-offline': p.connected === false
+          }">
+            <div class="dealer-badge" v-if="p.seat === state.dealerSeat">D</div>
+            <div class="seat-name">{{ p.nickname }}<span v-if="p.isYou" class="you-tag">你</span></div>
+            <div class="seat-chips">{{ p.chips }}</div>
+            <div class="seat-cards" v-if="p.cards && p.cards.length">
+              <span v-for="(c,j) in p.cards" :key="j"
+                class="card-s" :class="{red:c&&!c.hidden&&isRed(c),hidden:c&&c.hidden}">{{ c&&c.hidden?'?':fmtCard(c) }}</span>
+            </div>
+            <div v-if="p.betStreet > 0 && state.phase === 'playing'" class="seat-bet">下注 {{ p.betStreet }}</div>
+            <div v-if="p.allIn && state.phase === 'playing'" class="status-badge allin">ALL IN</div>
+          </div>
+        </div>
+      </div>
+      <!-- 上局结果快报 -->
+      <div class="card result-card" v-if="state.phase === 'lobby' && state.winnersLastHand && state.winnersLastHand.length">
+        <div class="result-header" @click="showLastHand = !showLastHand">
+          <span>🏆 上局结果</span>
+          <span class="toggle-icon">{{ showLastHand ? '▼' : '▶' }}</span>
+        </div>
+        <div class="result-winners">
+          <span v-for="w in state.winnersLastHand" :key="w.id" class="winner-item">{{ w.nickname }} <strong>+{{ w.amount }}</strong>（{{ w.hand }}）</span>
+        </div>
+        <div v-if="showLastHand && state.lastHandRecord" class="hand-detail">
+          <div class="detail-board" v-if="state.lastHandRecord.board && state.lastHandRecord.board.length">
+            <span class="detail-label">公共牌</span>
+            <span v-for="(c,i) in state.lastHandRecord.board" :key="'d'+i" class="card-s" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
+          </div>
+          <div class="detail-players">
+            <div v-for="dp in state.lastHandRecord.players" :key="dp.id" class="detail-player">
+              <span class="dp-name">{{ dp.nickname }}</span>
+              <span class="dp-cards" v-if="dp.cards && dp.cards.length">
+                <span v-for="(c,j) in dp.cards" :key="j" class="card-xs" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
+              </span>
+              <span v-if="dp.folded" class="dp-fold">弃牌</span>
+              <span class="dp-delta" :class="{'profit': dp.chipChange > 0, 'loss': dp.chipChange < 0}">{{ dp.chipChange > 0 ? '+' : '' }}{{ dp.chipChange }}</span>
             </div>
           </div>
         </div>
       </div>
-      <div class="card" v-if="state.phase==='lobby' && state.winnersLastHand && state.winnersLastHand.length">
-        <p class="hint">上局结果：</p>
-        <ul class="hint" style="color:var(--text);margin:0;padding-left:18px">
-          <li v-for="w in state.winnersLastHand" :key="w.id">{{ w.nickname }} +{{ w.amount }}（{{ w.hand }}）</li>
-        </ul>
-      </div>
-      <div class="card" v-if="state.phase==='playing' && legal.length">
-        <p>你的操作（{{ latencyMs }}ms）</p>
+      <!-- 操作区 -->
+      <div class="card action-card" v-if="state.phase === 'playing' && legal.length">
         <div class="actions">
-          <button type="button" class="danger" v-if="legal.indexOf('fold')>=0" @click="sendAct('fold')">弃牌</button>
-          <button type="button" class="secondary" v-if="legal.indexOf('check')>=0" @click="sendAct('check')">过牌</button>
-          <button type="button" v-if="legal.indexOf('call')>=0" @click="sendAct('call')">跟注</button>
+          <button type="button" class="act-btn danger" v-if="legal.indexOf('fold') >= 0" @click="sendAct('fold')">弃牌</button>
+          <button type="button" class="act-btn secondary" v-if="legal.indexOf('check') >= 0" @click="sendAct('check')">过牌</button>
+          <button type="button" class="act-btn primary" v-if="legal.indexOf('call') >= 0" @click="sendAct('call')">跟注 {{ callAmount }}</button>
         </div>
-        <div v-if="legal.indexOf('bet')>=0 || legal.indexOf('raise')>=0" class="raise-row" style="flex-direction:column;align-items:stretch">
-          <span class="hint" style="margin-bottom:4px">本轮目标总下注额（你在本轮已下 + 本次再加 = 该数；须高于当前注并满足最小加注）</span>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <input type="number" v-model.number="raiseTo" :min="minRaiseTo" :max="maxRaiseTo" placeholder="手动输入积分" style="flex:1;min-width:120px">
-            <button type="button" v-if="legal.indexOf('bet')>=0" @click="sendAct('bet')">下注</button>
-            <button type="button" v-if="legal.indexOf('raise')>=0" @click="sendAct('raise')">加注</button>
+        <div v-if="legal.indexOf('bet') >= 0 || legal.indexOf('raise') >= 0" class="raise-area">
+          <div class="raise-slider-row">
+            <input type="range" v-model.number="raiseTo" :min="minRaiseTo" :max="maxRaiseTo" step="1" class="raise-slider">
+          </div>
+          <div class="raise-input-row">
+            <input type="number" v-model.number="raiseTo" :min="minRaiseTo" :max="maxRaiseTo" class="raise-input">
+            <button type="button" class="act-btn accent" v-if="legal.indexOf('bet') >= 0" @click="sendAct('bet')">下注</button>
+            <button type="button" class="act-btn accent" v-if="legal.indexOf('raise') >= 0" @click="sendAct('raise')">加注</button>
+          </div>
+          <div class="quick-bets">
+            <button type="button" class="qb" @click="raiseTo = minRaiseTo">最小</button>
+            <button type="button" class="qb" @click="raiseTo = Math.min(Math.floor(state.pot * 0.5 + (myBetStreet || 0)), maxRaiseTo)">½底池</button>
+            <button type="button" class="qb" @click="raiseTo = Math.min(state.pot + (myBetStreet || 0), maxRaiseTo)">底池</button>
+            <button type="button" class="qb" @click="raiseTo = maxRaiseTo">全下</button>
           </div>
         </div>
-        <p class="hint">每轮下注上限 {{ state.scoring && state.scoring.maxBetPerRound }}；大盲 {{ state.scoring && state.scoring.bigBlind }}。</p>
       </div>
-      <div class="card">
-        <button type="button" v-if="isHost && state.phase==='lobby'" @click="startHand">开始一手</button>
-        <button type="button" class="secondary" @click="guide=true">新手引导</button>
-        <button type="button" class="secondary" @click="ping">测延迟</button>
+      <!-- 底部控制 -->
+      <div class="card bottom-ctrl">
+        <div class="ctrl-row">
+          <button type="button" v-if="isHost && state.phase === 'lobby' && !state.gameEnded" @click="startHand" class="start-btn">
+            {{ state.handNumber === 0 ? '开始第一手' : '立即开始下一手' }}
+          </button>
+          <button type="button" v-if="isHost && !state.gameEnded" class="secondary" @click="showSchedule = true">
+            {{ state.scheduledEndHands != null ? '修改预约 (' + state.scheduledEndHands + '局)' : '预约结束' }}
+          </button>
+          <button type="button" class="secondary" @click="showStats = true">本场统计</button>
+        </div>
+        <div class="ctrl-row secondary-row">
+          <button type="button" class="secondary sm" @click="guide = true">操作说明</button>
+          <button type="button" class="secondary sm" @click="ping">延迟 {{ latencyMs }}ms</button>
+        </div>
+      </div>
+      <!-- 游戏结束弹窗 -->
+      <div class="modal-mask" v-if="state.gameEnded">
+        <div class="modal game-over-modal">
+          <h2>🎯 本场游戏结束</h2>
+          <p class="hint" style="margin:0 0 12px">共进行 {{ state.handNumber }} 手</p>
+          <table class="stats-table">
+            <thead><tr><th>玩家</th><th>买入</th><th>剩余</th><th>盈亏</th></tr></thead>
+            <tbody>
+              <tr v-for="s in sessionStats" :key="s.id">
+                <td>{{ s.nickname }}</td>
+                <td>{{ s.buyIn }}</td>
+                <td>{{ s.chips }}</td>
+                <td :class="{'profit': s.profit > 0, 'loss': s.profit < 0}">
+                  <strong>{{ s.profit > 0 ? '+' : '' }}{{ s.profit }}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <button type="button" v-if="isHost" @click="newSession" style="margin-top:12px">开始新一场</button>
+          <a href="/" class="back-link">返回大厅</a>
+        </div>
+      </div>
+      <!-- 本场统计弹窗 -->
+      <div class="modal-mask" v-if="showStats" @click.self="showStats = false">
+        <div class="modal">
+          <button type="button" class="close" @click="showStats = false">✕</button>
+          <h2>本场统计</h2>
+          <p class="hint" style="margin:0 0 8px">已进行 {{ state.handNumber }} 手</p>
+          <table class="stats-table">
+            <thead><tr><th>玩家</th><th>买入</th><th>剩余</th><th>盈亏</th></tr></thead>
+            <tbody>
+              <tr v-for="s in sessionStats" :key="s.id">
+                <td>{{ s.nickname }}</td>
+                <td>{{ s.buyIn }}</td>
+                <td>{{ s.chips }}</td>
+                <td :class="{'profit': s.profit > 0, 'loss': s.profit < 0}">
+                  <strong>{{ s.profit > 0 ? '+' : '' }}{{ s.profit }}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <button type="button" @click="showStats = false" style="margin-top:10px">关闭</button>
+        </div>
+      </div>
+      <!-- 预约结束弹窗 -->
+      <div class="modal-mask" v-if="showSchedule" @click.self="showSchedule = false">
+        <div class="modal">
+          <button type="button" class="close" @click="showSchedule = false">✕</button>
+          <h2>预约结束</h2>
+          <p class="hint" style="margin:0 0 10px">设置几局后自动结束本场游戏，届时将展示盈亏统计。</p>
+          <div class="schedule-btns">
+            <button type="button" @click="scheduleEnd(1)">1局后</button>
+            <button type="button" @click="scheduleEnd(3)">3局后</button>
+            <button type="button" @click="scheduleEnd(5)">5局后</button>
+            <button type="button" @click="scheduleEnd(10)">10局后</button>
+          </div>
+          <div class="schedule-custom">
+            <input type="number" v-model.number="customEndHands" min="1" max="100" placeholder="自定义局数">
+            <button type="button" @click="scheduleEnd(customEndHands)">确定</button>
+          </div>
+          <button type="button" class="danger" v-if="state.scheduledEndHands != null" @click="cancelSchedule" style="margin-top:8px">取消预约</button>
+          <button type="button" class="secondary" @click="showSchedule = false" style="margin-top:6px">关闭</button>
+        </div>
+      </div>
+      <!-- 操作说明弹窗 -->
+      <div class="modal-mask" v-if="guide" @click.self="guide = false">
+        <div class="modal">
+          <button type="button" class="close" @click="guide = false">✕</button>
+          <h2>操作说明</h2>
+          <ul class="hint" style="padding-left:18px;margin:0;color:var(--text)">
+            <li>轮到你会高亮座位边框；点击跟注/弃牌/过牌/下注。</li>
+            <li>「下注/加注」填写<strong>本轮累计目标总下注额</strong>，可使用滑块或快捷按钮。</li>
+            <li>入座时可填带入积分（≥200，不设上限）；留空则用配置默认。</li>
+            <li>一局结束后将自动开始下一局（5秒倒计时）。</li>
+            <li>房主可预约结束：设置几局后结束，届时自动展示盈亏统计。</li>
+            <li>积分变动在每局结束后写入排行榜。</li>
+          </ul>
+          <button type="button" @click="guide = false">关闭</button>
+        </div>
       </div>
     </template>
     <div class="toast" v-if="toast">{{ toast }}</div>
-    <div class="modal-mask" v-if="guide" @click.self="guide=false">
-      <div class="modal">
-        <button type="button" class="close" @click="guide=false">✕</button>
-        <h2>操作说明</h2>
-        <ul class="hint" style="padding-left:18px;margin:0;color:var(--text)">
-          <li>轮到你会高亮座位边框；点击跟注/弃牌/过牌/下注。</li>
-          <li>「下注/加注」在同一输入框填写<strong>本轮累计要达到的总下注额</strong>，不得超过每轮上限。</li>
-          <li>入座时可填带入积分（≥200，不设上限）；留空则用配置默认。</li>
-          <li>积分变动在每局结束后写入排行榜；同一浏览器 ID 会合并统计。</li>
-        </ul>
-        <button type="button" @click="guide=false">关闭</button>
-      </div>
-    </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.min.js"></script>
   <script>
@@ -106,9 +233,7 @@
     return id;
   }
   function qs(name) {
-    try {
-      return new URL(location.href).searchParams.get(name) || '';
-    } catch (e) { return ''; }
+    try { return new URL(location.href).searchParams.get(name) || ''; } catch (e) { return ''; }
   }
   function parseRoomCodeFromHash() {
     let raw = (location.hash || '').replace(/^#/, '');
@@ -128,44 +253,56 @@
       joinBuyIn: '',
       roomCode: '',
       playerId: pid(),
-      state: { phase: 'lobby', players: [], pot: 0, board: [], scoring: {} },
+      state: { phase: 'lobby', players: [], pot: 0, board: [], scoring: {}, sessionStats: [], autoStartCountdown: 0, scheduledEndHands: null, gameEnded: false, handNumber: 0 },
       isHost: false,
       raiseTo: 0,
       toast: '',
       guide: false,
       latencyMs: '—',
-      ws: null
+      ws: null,
+      showLastHand: false,
+      showSchedule: false,
+      showStats: false,
+      customEndHands: 3
     },
     computed: {
       fullShare() {
         if (!this.roomCode) return '';
         return location.origin + '/room.html#' + this.roomCode;
       },
-      orderedPlayers() {
-        const ps = (this.state.players || []).slice();
-        ps.sort((a,b) => a.seat - b.seat);
-        return ps;
-      },
-      boardDisplay() {
-        return this.state.board || [];
-      },
-      legal() {
-        return this.state.legalActions || [];
-      },
+      boardDisplay() { return this.state.board || []; },
+      legal() { return this.state.legalActions || []; },
       streetLabel() {
         const m = { preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌' };
         return m[this.state.street] || (this.state.street || '—');
       },
+      myPlayer() { return (this.state.players || []).find(x => x.isYou); },
+      myBetStreet() { return this.myPlayer ? this.myPlayer.betStreet : 0; },
+      callAmount() {
+        if (!this.myPlayer) return 0;
+        return Math.min(Math.max(0, (this.state.currentBet || 0) - this.myPlayer.betStreet), this.myPlayer.chips);
+      },
       minRaiseTo() {
-        const p = (this.state.players || []).find(x => x.isYou);
-        if (!p || !this.state.scoring) return 0;
+        if (!this.myPlayer || !this.state.scoring) return 0;
         return (this.state.currentBet || 0) + (this.state.scoring.bigBlind || 10);
       },
       maxRaiseTo() {
-        const p = (this.state.players || []).find(x => x.isYou);
+        const p = this.myPlayer;
         if (!p || !this.state.scoring) return 0;
-        const cap = this.state.scoring.maxBetPerRound || 100;
+        const cap = this.state.scoring.maxBetPerRound || 99999;
         return Math.min(p.betStreet + p.chips, cap);
+      },
+      tablePlayers() {
+        const ps = (this.state.players || []).slice();
+        if (!ps.length) return [];
+        ps.sort((a, b) => a.seat - b.seat);
+        const myIdx = ps.findIndex(p => p.isYou);
+        if (myIdx < 0) return ps.map((p, i) => Object.assign({}, p, { displayIndex: i }));
+        const rotated = ps.slice(myIdx).concat(ps.slice(0, myIdx));
+        return rotated.map((p, i) => Object.assign({}, p, { displayIndex: i }));
+      },
+      sessionStats() {
+        return (this.state.sessionStats || []).slice().sort((a, b) => b.profit - a.profit);
       }
     },
     mounted() {
@@ -203,9 +340,7 @@
           if (typeof onOpenSend === 'function') onOpenSend();
           return;
         }
-        if (this.ws) {
-          try { this.ws.close(); } catch (e) {}
-        }
+        if (this.ws) { try { this.ws.close(); } catch (e) {} }
         this.ws = new WebSocket(url);
         this.ws.onopen = () => { if (typeof onOpenSend === 'function') onOpenSend(); };
         this.ws.onmessage = (ev) => {
@@ -226,7 +361,6 @@
           }
           if (m.type === 'error') this.showToast(m.message);
           if (m.type === 'pong') this.latencyMs = Math.max(0, Date.now() - m.t);
-          if (m.type === 'leaderboardTick') {}
         };
         this.ws.onclose = () => {
           if (this.inRoom) this.showToast('连接已断开');
@@ -239,27 +373,13 @@
         localStorage.setItem('poker_nick', nick);
         const pwd = typeof this.joinPwd === 'string' ? this.joinPwd.trim() : '';
         const code = this.pendingCode;
-        if (!code || code.length < 4) {
-          this.showToast('房间号无效');
-          return;
-        }
-        const payload = {
-          type: 'joinRoom',
-          roomCode: code,
-          password: pwd,
-          nickname: nick,
-          playerId: this.playerId
-        };
+        if (!code || code.length < 4) { this.showToast('房间号无效'); return; }
+        const payload = { type: 'joinRoom', roomCode: code, password: pwd, nickname: nick, playerId: this.playerId };
         const jb = typeof this.joinBuyIn === 'string' ? this.joinBuyIn.trim() : '';
         if (jb !== '') payload.buyIn = jb;
-        this.connectWs(() => {
-          this.ws.send(JSON.stringify(payload));
-        });
+        this.connectWs(() => { this.ws.send(JSON.stringify(payload)); });
       },
-      showToast(t) {
-        this.toast = t;
-        setTimeout(() => { this.toast = ''; }, 2800);
-      },
+      showToast(t) { this.toast = t; setTimeout(() => { this.toast = ''; }, 2800); },
       fmtCard(c) {
         if (!c || c.hidden) return '';
         const map = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
@@ -267,27 +387,43 @@
         const s = { s: '♠', h: '♥', d: '♦', c: '♣' }[c.s] || c.s;
         return r + s;
       },
-      isRed(c) {
-        return c && (c.s === 'h' || c.s === 'd');
-      },
+      isRed(c) { return c && (c.s === 'h' || c.s === 'd'); },
       sendAct(action) {
         const need = action === 'raise' || action === 'bet';
         let raiseTo;
-        if (need) {
-          const x = Number(this.raiseTo);
-          raiseTo = Number.isFinite(x) ? x : undefined;
-        }
-        const payload = { type: 'action', action, raiseTo };
-        this.ws.send(JSON.stringify(payload));
+        if (need) { const x = Number(this.raiseTo); raiseTo = Number.isFinite(x) ? x : undefined; }
+        this.ws.send(JSON.stringify({ type: 'action', action, raiseTo }));
       },
-      startHand() {
-        this.ws.send(JSON.stringify({ type: 'startHand' }));
-      },
+      startHand() { this.ws.send(JSON.stringify({ type: 'startHand' })); },
       ping() {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-        const t = Date.now();
-        this.ws.send(JSON.stringify({ type: 'ping', t }));
-      }
+        this.ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+      },
+      seatStyle(displayIndex, totalSeats) {
+        if (totalSeats <= 0) return {};
+        const angle = (2 * Math.PI * displayIndex) / totalSeats;
+        var rx, ry;
+        if (window.innerWidth <= 480) { rx = 40; ry = 40; } else { rx = 43; ry = 40; }
+        return {
+          left: (50 + rx * Math.sin(angle)) + '%',
+          top: (50 + ry * Math.cos(angle)) + '%'
+        };
+      },
+      copyShare() {
+        if (!navigator.clipboard) { this.showToast('请手动复制链接'); return; }
+        navigator.clipboard.writeText(this.fullShare).then(() => this.showToast('链接已复制')).catch(() => this.showToast('复制失败'));
+      },
+      scheduleEnd(hands) {
+        const n = Math.floor(Number(hands));
+        if (!n || n < 1 || n > 100) { this.showToast('请输入1-100的局数'); return; }
+        this.ws.send(JSON.stringify({ type: 'scheduleEnd', hands: n }));
+        this.showSchedule = false;
+      },
+      cancelSchedule() {
+        this.ws.send(JSON.stringify({ type: 'scheduleEnd', cancel: true }));
+        this.showSchedule = false;
+      },
+      newSession() { this.ws.send(JSON.stringify({ type: 'newSession' })); }
     }
   });
   </script>

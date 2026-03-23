@@ -20,7 +20,11 @@ function getOrCreateRoom(code, scoring) {
       passwordHash: '',
       table: new PokerTable(scoring),
       hostPlayerId: null,
-      clients: new Map()
+      clients: new Map(),
+      scheduledEndHands: null,
+      gameEnded: false,
+      autoStartCountdown: 0,
+      autoStartTimer: null
     };
     rooms.set(code, r);
   }
@@ -75,6 +79,9 @@ function detachClient(room, playerId) {
 function pushState(room) {
   for (const [pid, c] of room.clients) {
     const st = room.table.publicState(pid);
+    st.autoStartCountdown = room.autoStartCountdown || 0;
+    st.scheduledEndHands = room.scheduledEndHands;
+    st.gameEnded = room.gameEnded || false;
     send(c.ws, { type: 'state', payload: st });
   }
 }

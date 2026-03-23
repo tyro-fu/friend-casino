@@ -61,6 +61,56 @@ function resolveBuyIn(msg, defaultChips) {
   return { ok: true, chips: n };
 }
 
+function clearAutoStart(room) {
+  if (room.autoStartTimer) {
+    clearInterval(room.autoStartTimer);
+    room.autoStartTimer = null;
+  }
+  room.autoStartCountdown = 0;
+}
+
+function scheduleAutoStart(room, seconds) {
+  clearAutoStart(room);
+  if (room.gameEnded) return;
+  room.autoStartCountdown = seconds;
+  R.pushState(room);
+  room.autoStartTimer = setInterval(() => {
+    room.autoStartCountdown--;
+    if (room.autoStartCountdown <= 0) {
+      clearAutoStart(room);
+      if (room.table.canStartHand() && room.table.phase === 'lobby' && !room.gameEnded) {
+        const res = room.table.startHand();
+        if (res.ok) {
+          R.pushState(room);
+          checkHandEnd(room);
+        } else {
+          R.pushState(room);
+        }
+      } else {
+        R.pushState(room);
+      }
+    } else {
+      R.pushState(room);
+    }
+  }, 1000);
+}
+
+function checkHandEnd(room) {
+  if (room.table.phase === 'lobby' && room.table.winnersLastHand.length > 0) {
+    if (room.scheduledEndHands != null) {
+      room.scheduledEndHands--;
+      if (room.scheduledEndHands <= 0) {
+        room.scheduledEndHands = 0;
+        room.gameEnded = true;
+        clearAutoStart(room);
+        R.pushState(room);
+        return;
+      }
+    }
+    scheduleAutoStart(room, 5);
+  }
+}
+
 wss.on('connection', (ws) => {
   let room = null;
   let playerId = null;
@@ -158,6 +208,11 @@ wss.on('connection', (ws) => {
         return;
       }
       if (type === 'startHand') {
+        clearAutoStart(room);
+        if (room.gameEnded) {
+          R.send(ws, { type: 'error', message: '本场游戏已结束，房主可点击"开始新一场"' });
+          return;
+        }
         if (playerId !== room.hostPlayerId) {
           R.send(ws, { type: 'error', message: '仅房主可开局' });
           return;
@@ -168,6 +223,7 @@ wss.on('connection', (ws) => {
           return;
         }
         R.pushState(room);
+        checkHandEnd(room);
         return;
       }
       if (type === 'action') {
@@ -182,6 +238,41 @@ wss.on('connection', (ws) => {
         }
         R.pushState(room);
         R.broadcast(room, { type: 'leaderboardTick' });
+        checkHandEnd(room);
+        return;
+      }
+      if (type === 'scheduleEnd') {
+        if (playerId !== room.hostPlayerId) {
+          R.send(ws, { type: 'error', message: '仅房主可操作' });
+          return;
+        }
+        const hands = Math.floor(Number(msg.hands));
+        if (msg.cancel) {
+          room.scheduledEndHands = null;
+        } else if (hands > 0 && hands <= 100) {
+          room.scheduledEndHands = hands;
+          room.gameEnded = false;
+        }
+        R.pushState(room);
+        return;
+      }
+      if (type === 'newSession') {
+        if (playerId !== room.hostPlayerId) {
+          R.send(ws, { type: 'error', message: '仅房主可操作' });
+          return;
+        }
+        clearAutoStart(room);
+        room.gameEnded = false;
+        room.scheduledEndHands = null;
+        room.table.sessionBuyIns.clear();
+        room.table.handNumber = 0;
+        room.table.lastHandRecord = null;
+        room.table.winnersLastHand = [];
+        room.table.lastShowdown = null;
+        for (const [id, p] of room.table.players) {
+          room.table.sessionBuyIns.set(id, p.chips);
+        }
+        R.pushState(room);
         return;
       }
     } catch (e) {

@@ -54,6 +54,9 @@ class PokerTable {
     this.chipsAtHandStart = new Map();
     this.actedThisStreet = new Set();
     this.lastShowdown = null;
+    this.handNumber = 0;
+    this.sessionBuyIns = new Map();
+    this.lastHandRecord = null;
   }
 
   seatOrderIds() {
@@ -107,6 +110,7 @@ class PokerTable {
     };
     this.players.set(playerId, p);
     this.seats[seat] = playerId;
+    this.sessionBuyIns.set(playerId, (this.sessionBuyIns.get(playerId) || 0) + chips);
     return { ok: true, seat };
   }
 
@@ -142,6 +146,8 @@ class PokerTable {
     if (!this.canStartHand()) return { ok: false, error: '人数或筹码不足' };
     this.lastShowdown = null;
     this.winnersLastHand = [];
+    this.lastHandRecord = null;
+    this.handNumber++;
     this.purgeDisconnectedIfLobby();
     const active = this.seatOrderIds().filter((id) => {
       const p = this.players.get(id);
@@ -378,12 +384,52 @@ class PokerTable {
     this.lastShowdown = { board: this.board.slice(), players };
   }
 
+  captureLastHandRecord() {
+    const players = [];
+    for (const [id, startChips] of this.chipsAtHandStart) {
+      const p = this.players.get(id);
+      if (!p) continue;
+      players.push({
+        id: p.id,
+        nickname: p.nickname,
+        seat: p.seat,
+        cards: p.holeCards.slice(),
+        folded: p.folded,
+        chipChange: p.chips - startChips
+      });
+    }
+    this.lastHandRecord = {
+      handNumber: this.handNumber,
+      pot: this.pot,
+      board: this.board.slice(),
+      players,
+      winners: this.winnersLastHand.slice()
+    };
+  }
+
+  getSessionStats() {
+    const stats = [];
+    for (const [id, p] of this.players) {
+      const buyIn = this.sessionBuyIns.get(id) || 0;
+      stats.push({
+        id: p.id,
+        nickname: p.nickname,
+        seat: p.seat,
+        chips: p.chips,
+        buyIn,
+        profit: p.chips - buyIn
+      });
+    }
+    return stats.sort((a, b) => b.profit - a.profit);
+  }
+
   awardSingle(winner) {
     const total = this.pot;
     winner.chips += total;
     this.winnersLastHand = [{ id: winner.id, nickname: winner.nickname, amount: total, hand: '对手弃牌' }];
     this.lastHandLog = { pot: total, winners: this.winnersLastHand.slice() };
     this.captureShowdown();
+    this.captureLastHandRecord();
     this.pot = 0;
     this.persistHandStats();
     this.endHand();
@@ -435,6 +481,7 @@ class PokerTable {
     const totalPot = this.pot;
     this.lastHandLog = { pot: totalPot, winners: this.winnersLastHand.slice(), board: this.board.slice() };
     this.captureShowdown();
+    this.captureLastHandRecord();
     this.pot = 0;
     this.persistHandStats();
     this.endHand();
@@ -602,7 +649,10 @@ class PokerTable {
         maxBetPerRound: scoring.maxBetPerRound
       },
       legalActions: forPlayerId ? this.legalActions(forPlayerId) : [],
-      lastShowdown: this.lastShowdown
+      lastShowdown: this.lastShowdown,
+      lastHandRecord: this.lastHandRecord,
+      handNumber: this.handNumber,
+      sessionStats: this.getSessionStats()
     };
   }
 
