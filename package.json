@@ -1,0 +1,20 @@
+{
+  "name": "friend-texas-holdem",
+  "version": "1.0.0",
+  "private": true,
+  "description": "好友私密德州扑克 — Node WebSocket + SQLite",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.6.0",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}

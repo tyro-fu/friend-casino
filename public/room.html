@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>牌桌</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="wrap" id="app" v-cloak>
+    <div class="topbar">
+      <h1>{{ gameName }}</h1>
+      <a href="/">← 大厅</a>
+    </div>
+    <div class="card" v-if="!createMode && !inRoom">
+      <p>加入房间 <strong>{{ pendingCode || '—' }}</strong></p>
+      <label>昵称</label>
+      <input v-model.trim="joinNick" maxlength="24" placeholder="显示名称" autocomplete="nickname">
+      <label>房间密码</label>
+      <input v-model="joinPwd" type="password" maxlength="32" placeholder="房主设过密码则必填；未设密码可留空" autocomplete="current-password">
+      <label>带入积分（可选）</label>
+      <input v-model.trim="joinBuyIn" inputmode="numeric" placeholder="留空则用大厅默认；填写须 ≥200，无上限">
+      <p class="hint">分享链接里不含密码（安全考虑），请向房主索要密码后在此填写。</p>
+      <button type="button" @click="submitJoin">进入房间</button>
+    </div>
+    <div class="card" v-else-if="createMode && !inRoom && roomCode">
+      <p>与服务器连接已断开，请刷新或返回大厅。</p>
+      <button type="button" @click="location.reload()">刷新页面</button>
+      <a href="/" style="display:inline-block;margin-top:8px">← 大厅</a>
+    </div>
+    <div class="card" v-else-if="createMode && !inRoom && !roomCode">
+      <p>正在连接服务器…</p>
+    </div>
+    <template v-else-if="inRoom">
+      <div class="card">
+        <p>房间号：<strong>{{ roomCode || '—' }}</strong></p>
+        <p class="hint">分享链接：<input readonly :value="fullShare" @focus="$event.target.select()" style="margin-top:6px"></p>
+        <p class="hint" v-if="isHost">好友打开链接后需在页面填写房间密码（若已设置）。</p>
+        <p class="hint" v-if="isHost">你是房主，人满后可点「开始一手」。</p>
+      </div>
+      <div class="table-view">
+        <div class="pot">底池：{{ state.pot || 0 }} · 街：{{ streetLabel }} · 当前注：{{ state.currentBet || 0 }}</div>
+        <div class="board">
+          <span v-for="(c,i) in boardDisplay" :key="'b'+i" class="card-p" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
+          <span v-if="!boardDisplay.length" class="hint">公共牌未发出</span>
+        </div>
+        <div class="players">
+          <div v-for="p in orderedPlayers" :key="p.id" class="pseat" :class="{actor:p.seat===state.actorSeat, dealer:p.seat===state.dealerSeat}">
+            <div class="nm">{{ p.nickname }}{{ p.isYou?'（你）':'' }}{{ p.connected===false?' · 离线':'' }}</div>
+            <div class="ch">筹码 {{ p.chips }} · 本轮已下 {{ p.betStreet }}{{ p.folded?' · 弃牌':'' }}{{ p.allIn?' · 全下':'' }}</div>
+            <div style="margin-top:4px;display:flex;gap:4px">
+              <span v-for="(c,j) in p.cards" :key="j" class="card-p" :class="{red:c&&!c.hidden&&isRed(c),hidden:c&&c.hidden}">{{ c&&c.hidden?'?':fmtCard(c) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card" v-if="state.phase==='lobby' && state.winnersLastHand && state.winnersLastHand.length">
+        <p class="hint">上局结果：</p>
+        <ul class="hint" style="color:var(--text);margin:0;padding-left:18px">
+          <li v-for="w in state.winnersLastHand" :key="w.id">{{ w.nickname }} +{{ w.amount }}（{{ w.hand }}）</li>
+        </ul>
+      </div>
+      <div class="card" v-if="state.phase==='playing' && legal.length">
+        <p>你的操作（{{ latencyMs }}ms）</p>
+        <div class="actions">
+          <button type="button" class="danger" v-if="legal.indexOf('fold')>=0" @click="sendAct('fold')">弃牌</button>
+          <button type="button" class="secondary" v-if="legal.indexOf('check')>=0" @click="sendAct('check')">过牌</button>
+          <button type="button" v-if="legal.indexOf('call')>=0" @click="sendAct('call')">跟注</button>
+        </div>
+        <div v-if="legal.indexOf('bet')>=0 || legal.indexOf('raise')>=0" class="raise-row" style="flex-direction:column;align-items:stretch">
+          <span class="hint" style="margin-bottom:4px">本轮目标总下注额（你在本轮已下 + 本次再加 = 该数；须高于当前注并满足最小加注）</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="number" v-model.number="raiseTo" :min="minRaiseTo" :max="maxRaiseTo" placeholder="手动输入积分" style="flex:1;min-width:120px">
+            <button type="button" v-if="legal.indexOf('bet')>=0" @click="sendAct('bet')">下注</button>
+            <button type="button" v-if="legal.indexOf('raise')>=0" @click="sendAct('raise')">加注</button>
+          </div>
+        </div>
+        <p class="hint">每轮下注上限 {{ state.scoring && state.scoring.maxBetPerRound }}；大盲 {{ state.scoring && state.scoring.bigBlind }}。</p>
+      </div>
+      <div class="card">
+        <button type="button" v-if="isHost && state.phase==='lobby'" @click="startHand">开始一手</button>
+        <button type="button" class="secondary" @click="guide=true">新手引导</button>
+        <button type="button" class="secondary" @click="ping">测延迟</button>
+      </div>
+    </template>
+    <div class="toast" v-if="toast">{{ toast }}</div>
+    <div class="modal-mask" v-if="guide" @click.self="guide=false">
+      <div class="modal">
+        <button type="button" class="close" @click="guide=false">✕</button>
+        <h2>操作说明</h2>
+        <ul class="hint" style="padding-left:18px;margin:0;color:var(--text)">
+          <li>轮到你会高亮座位边框；点击跟注/弃牌/过牌/下注。</li>
+          <li>「下注/加注」在同一输入框填写<strong>本轮累计要达到的总下注额</strong>，不得超过每轮上限。</li>
+          <li>入座时可填带入积分（≥200，不设上限）；留空则用配置默认。</li>
+          <li>积分变动在每局结束后写入排行榜；同一浏览器 ID 会合并统计。</li>
+        </ul>
+        <button type="button" @click="guide=false">关闭</button>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.min.js"></script>
+  <script>
+  function pid() {
+    let id = localStorage.getItem('poker_pid');
+    if (!id) { id = 'p_' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('poker_pid', id); }
+    return id;
+  }
+  function qs(name) {
+    try {
+      return new URL(location.href).searchParams.get(name) || '';
+    } catch (e) { return ''; }
+  }
+  function parseRoomCodeFromHash() {
+    let raw = (location.hash || '').replace(/^#/, '');
+    const qi = raw.indexOf('?');
+    if (qi >= 0) raw = raw.slice(0, qi);
+    return raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+  new Vue({
+    el: '#app',
+    data: {
+      gameName: '好友德州扑克',
+      createMode: false,
+      inRoom: false,
+      pendingCode: '',
+      joinNick: '',
+      joinPwd: '',
+      joinBuyIn: '',
+      roomCode: '',
+      playerId: pid(),
+      state: { phase: 'lobby', players: [], pot: 0, board: [], scoring: {} },
+      isHost: false,
+      raiseTo: 0,
+      toast: '',
+      guide: false,
+      latencyMs: '—',
+      ws: null
+    },
+    computed: {
+      fullShare() {
+        if (!this.roomCode) return '';
+        return location.origin + '/room.html#' + this.roomCode;
+      },
+      orderedPlayers() {
+        const ps = (this.state.players || []).slice();
+        ps.sort((a,b) => a.seat - b.seat);
+        return ps;
+      },
+      boardDisplay() {
+        return this.state.board || [];
+      },
+      legal() {
+        return this.state.legalActions || [];
+      },
+      streetLabel() {
+        const m = { preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌' };
+        return m[this.state.street] || (this.state.street || '—');
+      },
+      minRaiseTo() {
+        const p = (this.state.players || []).find(x => x.isYou);
+        if (!p || !this.state.scoring) return 0;
+        return (this.state.currentBet || 0) + (this.state.scoring.bigBlind || 10);
+      },
+      maxRaiseTo() {
+        const p = (this.state.players || []).find(x => x.isYou);
+        if (!p || !this.state.scoring) return 0;
+        const cap = this.state.scoring.maxBetPerRound || 100;
+        return Math.min(p.betStreet + p.chips, cap);
+      }
+    },
+    mounted() {
+      fetch('/api/config').then(r => r.json()).then(c => {
+        if (c.gameName) { this.gameName = c.gameName; document.title = c.gameName + ' · 牌桌'; }
+      }).catch(() => {});
+      this.createMode = qs('create') === '1';
+      this.joinNick = (qs('nick') || localStorage.getItem('poker_nick') || '玩家').slice(0, 24);
+      this.joinPwd = qs('pwd');
+      this.joinBuyIn = qs('buyin');
+      if (this.createMode) {
+        const pwd = qs('pwd');
+        const nick = this.joinNick || '玩家';
+        const buyPayload = {};
+        const b = qs('buyin');
+        if (b !== '' && b != null) buyPayload.buyIn = b;
+        localStorage.setItem('poker_nick', nick);
+        this.connectWs(() => {
+          this.ws.send(JSON.stringify(Object.assign({ type: 'createRoom', password: pwd, nickname: nick, playerId: this.playerId }, buyPayload)));
+        });
+        return;
+      }
+      const code = parseRoomCodeFromHash();
+      if (code.length < 4) {
+        this.showToast('房间号无效，请从大厅加入或检查链接');
+        return;
+      }
+      this.pendingCode = code;
+    },
+    methods: {
+      connectWs(onOpenSend) {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = proto + '//' + location.host;
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          if (typeof onOpenSend === 'function') onOpenSend();
+          return;
+        }
+        if (this.ws) {
+          try { this.ws.close(); } catch (e) {}
+        }
+        this.ws = new WebSocket(url);
+        this.ws.onopen = () => { if (typeof onOpenSend === 'function') onOpenSend(); };
+        this.ws.onmessage = (ev) => {
+          let m;
+          try { m = JSON.parse(ev.data); } catch (e) { return; }
+          if (m.type === 'joined') {
+            this.inRoom = true;
+            this.roomCode = m.roomCode;
+            this.playerId = m.playerId;
+            if (typeof m.isHost === 'boolean') this.isHost = m.isHost;
+            localStorage.setItem('poker_pid', m.playerId);
+            history.replaceState(null, '', '/room.html#' + m.roomCode);
+          }
+          if (m.type === 'state') {
+            this.state = m.payload;
+            const p = (this.state.players || []).find(x => x.isYou);
+            if (p) this.raiseTo = Math.min(this.maxRaiseTo, Math.max(this.minRaiseTo, (this.state.currentBet || 0) + (this.state.scoring && this.state.scoring.bigBlind)));
+          }
+          if (m.type === 'error') this.showToast(m.message);
+          if (m.type === 'pong') this.latencyMs = Math.max(0, Date.now() - m.t);
+          if (m.type === 'leaderboardTick') {}
+        };
+        this.ws.onclose = () => {
+          if (this.inRoom) this.showToast('连接已断开');
+          this.inRoom = false;
+        };
+        this.ws.onerror = () => { this.showToast('连接失败'); };
+      },
+      submitJoin() {
+        const nick = (this.joinNick || '玩家').slice(0, 24);
+        localStorage.setItem('poker_nick', nick);
+        const pwd = typeof this.joinPwd === 'string' ? this.joinPwd.trim() : '';
+        const code = this.pendingCode;
+        if (!code || code.length < 4) {
+          this.showToast('房间号无效');
+          return;
+        }
+        const payload = {
+          type: 'joinRoom',
+          roomCode: code,
+          password: pwd,
+          nickname: nick,
+          playerId: this.playerId
+        };
+        const jb = typeof this.joinBuyIn === 'string' ? this.joinBuyIn.trim() : '';
+        if (jb !== '') payload.buyIn = jb;
+        this.connectWs(() => {
+          this.ws.send(JSON.stringify(payload));
+        });
+      },
+      showToast(t) {
+        this.toast = t;
+        setTimeout(() => { this.toast = ''; }, 2800);
+      },
+      fmtCard(c) {
+        if (!c || c.hidden) return '';
+        const map = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
+        const r = c.r <= 10 ? String(c.r) : map[c.r];
+        const s = { s: '♠', h: '♥', d: '♦', c: '♣' }[c.s] || c.s;
+        return r + s;
+      },
+      isRed(c) {
+        return c && (c.s === 'h' || c.s === 'd');
+      },
+      sendAct(action) {
+        const need = action === 'raise' || action === 'bet';
+        let raiseTo;
+        if (need) {
+          const x = Number(this.raiseTo);
+          raiseTo = Number.isFinite(x) ? x : undefined;
+        }
+        const payload = { type: 'action', action, raiseTo };
+        this.ws.send(JSON.stringify(payload));
+      },
+      startHand() {
+        this.ws.send(JSON.stringify({ type: 'startHand' }));
+      },
+      ping() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        const t = Date.now();
+        this.ws.send(JSON.stringify({ type: 'ping', t }));
+      }
+    }
+  });
+  </script>
+  <style>[v-cloak]{display:none}</style>
+</body>
+</html>

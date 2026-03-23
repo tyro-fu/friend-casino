@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>好友德州扑克</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="wrap" id="app">
+    <div class="topbar">
+      <h1>{{ gameName }}</h1>
+      <span class="badge">私密房间 · 本地积分</span>
+    </div>
+    <div class="card">
+      <label>昵称（仅显示用）</label>
+      <input v-model.trim="nickname" maxlength="24" placeholder="例如：老王" autocomplete="nickname">
+      <p class="hint">不收集手机号等信息；玩家 ID 仅存于本机浏览器。</p>
+    </div>
+    <div class="card">
+      <label>创建私密房间</label>
+      <input v-model.trim="createPassword" type="password" maxlength="32" placeholder="房间密码（可留空）" autocomplete="new-password">
+      <label>带入积分（可选）</label>
+      <input v-model.trim="buyIn" inputmode="numeric" placeholder="留空使用配置默认；填写须 ≥200，无上限">
+      <button type="button" @click="goCreate">创建并进入</button>
+    </div>
+    <div class="card">
+      <label>加入房间</label>
+      <input v-model.trim="joinCode" maxlength="8" placeholder="房间号（如 ABC12Z）" autocapitalize="characters">
+      <input v-model.trim="joinPassword" type="password" maxlength="32" placeholder="房间密码" autocomplete="current-password">
+      <label>带入积分（可选）</label>
+      <input v-model.trim="buyInJoin" inputmode="numeric" placeholder="≥200，留空用默认">
+      <button type="button" class="secondary" @click="goJoin">加入房间</button>
+      <p class="hint">若只打开好友分享的链接（仅含房间号），进入页面后需在牌桌页填写房间密码。</p>
+    </div>
+    <div class="card">
+      <h1 style="font-size:1rem;margin-bottom:8px">积分排行榜（全局）</h1>
+      <table class="lb-table" v-if="lb.length">
+        <thead><tr><th>#</th><th>昵称</th><th>累计积分变动</th><th>局数</th></tr></thead>
+        <tbody>
+          <tr v-for="(r,i) in lb" :key="r.player_id">
+            <td>{{ i+1 }}</td>
+            <td>{{ r.nickname }}</td>
+            <td>{{ r.total_points }}</td>
+            <td>{{ r.hands_played }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="hint">暂无记录，完成一局后自动累计。</p>
+      <button type="button" class="secondary" @click="loadLb">刷新榜单</button>
+    </div>
+    <p class="hint"><a href="#" @click.prevent="guide=true">新手引导</a> · 推荐使用 Chrome / Firefox / Edge，支持手机浏览器横竖屏访问。</p>
+    <div class="modal-mask" v-if="guide" @click.self="guide=false">
+      <div class="modal">
+        <button type="button" class="close" @click="guide=false">✕</button>
+        <h2>基本规则与操作</h2>
+        <ul class="hint" style="padding-left:18px;margin:0;color:var(--text)">
+          <li>每人发两张底牌，共用五张公共牌，用 7 张里最好的 5 张比大小。</li>
+          <li>轮到你时可：弃牌、过牌（无人下注时）、跟注、下注/加注（受「每轮下注上限」约束）。</li>
+          <li>积分规则由服务器 <code>config/game.json</code> 配置；默认大盲 10、每轮上限 100。</li>
+          <li>房主点击「开始一手」发牌；单桌最多 9 人，适合朋友私下娱乐。</li>
+        </ul>
+        <button type="button" @click="guide=false">知道了</button>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.7.16/dist/vue.min.js"></script>
+  <script>
+  function pid() {
+    let id = localStorage.getItem('poker_pid');
+    if (!id) { id = 'p_' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('poker_pid', id); }
+    return id;
+  }
+  new Vue({
+    el: '#app',
+    data: {
+      gameName: '好友德州扑克',
+      nickname: localStorage.getItem('poker_nick') || '',
+      createPassword: '',
+      joinCode: '',
+      joinPassword: '',
+      buyIn: '',
+      buyInJoin: '',
+      lb: [],
+      guide: false
+    },
+    mounted() {
+      fetch('/api/config').then(r => r.json()).then(c => { if (c.gameName) this.gameName = c.gameName; document.title = c.gameName; }).catch(() => {});
+      this.loadLb();
+    },
+    methods: {
+      loadLb() {
+        fetch('/api/leaderboard').then(r => r.json()).then(j => { this.lb = j.list || []; }).catch(() => { this.lb = []; });
+      },
+      buyInQuery(raw) {
+        const b = (raw || '').trim();
+        if (b === '') return '';
+        const n = Math.floor(Number(b));
+        if (!Number.isFinite(n) || n < 200) {
+          alert('带入积分须为不少于 200 的整数');
+          return null;
+        }
+        return '&buyin=' + encodeURIComponent(String(n));
+      },
+      goCreate() {
+        localStorage.setItem('poker_nick', this.nickname || '玩家');
+        const p = encodeURIComponent(this.createPassword || '');
+        const n = encodeURIComponent(this.nickname || '玩家');
+        const bi = this.buyInQuery(this.buyIn);
+        if (bi === null) return;
+        window.location.href = '/room.html?create=1&pwd=' + p + '&nick=' + n + bi;
+      },
+      goJoin() {
+        const code = (this.joinCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (code.length < 4) { alert('请输入有效房间号'); return; }
+        localStorage.setItem('poker_nick', this.nickname || '玩家');
+        const p = encodeURIComponent(this.joinPassword || '');
+        const n = encodeURIComponent(this.nickname || '玩家');
+        const bi = this.buyInQuery(this.buyInJoin);
+        if (bi === null) return;
+        window.location.href = '/room.html?pwd=' + p + '&nick=' + n + bi + '#' + code;
+      }
+    }
+  });
+  </script>
+</body>
+</html>
