@@ -81,22 +81,22 @@
           </div>
         </div>
       </div>
-      <!-- 上局结果快报 -->
-      <div class="card result-card" v-if="state.phase === 'lobby' && state.winnersLastHand && state.winnersLastHand.length">
+      <!-- 上一局对局记录（缓存，进行中亦可点开） -->
+      <div class="card result-card" v-if="lastHandSnapshot && lastHandSnapshot.winnersLastHand.length">
         <div class="result-header" @click="showLastHand = !showLastHand">
-          <span>🏆 上局结果</span>
+          <span>上一局对局记录</span>
           <span class="toggle-icon">{{ showLastHand ? '▼' : '▶' }}</span>
         </div>
         <div class="result-winners">
-          <span v-for="w in state.winnersLastHand" :key="w.id" class="winner-item">{{ w.nickname }} <strong>+{{ w.amount }}</strong>（{{ w.hand }}）</span>
+          <span v-for="w in lastHandSnapshot.winnersLastHand" :key="w.id" class="winner-item">{{ w.nickname }} <strong>+{{ w.amount }}</strong>（{{ w.hand }}）</span>
         </div>
-        <div v-if="showLastHand && state.lastHandRecord" class="hand-detail">
-          <div class="detail-board" v-if="state.lastHandRecord.board && state.lastHandRecord.board.length">
+        <div v-if="showLastHand && lastHandSnapshot.lastHandRecord" class="hand-detail">
+          <div class="detail-board" v-if="lastHandSnapshot.lastHandRecord.board && lastHandSnapshot.lastHandRecord.board.length">
             <span class="detail-label">公共牌</span>
-            <span v-for="(c,i) in state.lastHandRecord.board" :key="'d'+i" class="card-s" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
+            <span v-for="(c,i) in lastHandSnapshot.lastHandRecord.board" :key="'d'+i" class="card-s" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
           </div>
           <div class="detail-players">
-            <div v-for="dp in state.lastHandRecord.players" :key="dp.id" class="detail-player">
+            <div v-for="dp in lastHandSnapshot.lastHandRecord.players" :key="dp.id" class="detail-player">
               <span class="dp-name">{{ dp.nickname }}</span>
               <span class="dp-cards" v-if="dp.cards && dp.cards.length">
                 <span v-for="(c,j) in dp.cards" :key="j" class="card-xs" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
@@ -142,8 +142,9 @@
       <!-- 底部控制 -->
       <div class="card bottom-ctrl">
         <div class="ctrl-row">
-          <button type="button" v-if="isHost && state.phase === 'lobby' && !state.gameEnded" @click="startHand" class="start-btn">
-            {{ state.handNumber === 0 ? '开始第一手' : '立即开始下一手' }}
+          <button type="button" v-if="isHost && state.phase === 'lobby' && !state.gameEnded" @click="startHand" class="start-btn" :disabled="hostStartCooldownLeft > 0">
+            <template v-if="hostStartCooldownLeft > 0">展示中 {{ hostStartCooldownLeft }}s</template>
+            <template v-else>{{ state.handNumber === 0 ? '开始第一手' : '立即开始下一手' }}</template>
           </button>
           <button type="button" v-if="isHost && !state.gameEnded" class="secondary" @click="showSchedule = true">
             {{ state.scheduledEndHands != null ? '修改预约 (' + state.scheduledEndHands + '局)' : '预约结束' }}
@@ -266,7 +267,7 @@
       joinBuyIn: '',
       roomCode: '',
       playerId: pid(),
-      state: { phase: 'lobby', players: [], pot: 0, board: [], scoring: {}, sessionStats: [], autoStartCountdown: 0, scheduledEndHands: null, gameEnded: false, handNumber: 0, buyInWait: { count: 0, nicknames: [] } },
+      state: { phase: 'lobby', players: [], pot: 0, board: [], scoring: {}, sessionStats: [], autoStartCountdown: 0, nextHandNotBefore: 0, scheduledEndHands: null, gameEnded: false, handNumber: 0, buyInWait: { count: 0, nicknames: [] }, winnersLastHand: [] },
       rebuyBuyIn: '',
       isHost: false,
       raiseTo: 0,
@@ -277,7 +278,23 @@
       showLastHand: false,
       showSchedule: false,
       showStats: false,
-      customEndHands: 3
+      customEndHands: 3,
+      lastHandSnapshot: null,
+      lastWinnersSig: '',
+      lastHandRevealTimer: null,
+      _uiTick: null,
+      tickSec: 0
+    },
+    watch: {
+      inRoom(v) {
+        if (v) {
+          if (this._uiTick) return;
+          this._uiTick = setInterval(() => { this.tickSec++; }, 300);
+        } else if (this._uiTick) {
+          clearInterval(this._uiTick);
+          this._uiTick = null;
+        }
+      }
     },
     computed: {
       fullShare() {
@@ -317,7 +334,18 @@
       },
       sessionStats() {
         return (this.state.sessionStats || []).slice().sort((a, b) => b.profit - a.profit);
+      },
+      hostStartCooldownLeft() {
+        void this.tickSec;
+        const u = this.state.nextHandNotBefore;
+        if (!u) return 0;
+        const ms = Number(u) - Date.now();
+        return ms > 0 ? Math.ceil(ms / 1000) : 0;
       }
+    },
+    beforeDestroy() {
+      if (this._uiTick) clearInterval(this._uiTick);
+      if (this.lastHandRevealTimer) clearTimeout(this.lastHandRevealTimer);
     },
     mounted() {
       fetch('/api/config').then(r => r.json()).then(c => {
@@ -372,6 +400,27 @@
             this.state = m.payload;
             const p = (this.state.players || []).find(x => x.isYou);
             if (p) this.raiseTo = Math.min(this.maxRaiseTo, Math.max(this.minRaiseTo, (this.state.currentBet || 0) + (this.state.scoring && this.state.scoring.bigBlind)));
+            const w = this.state.winnersLastHand || [];
+            if (this.state.phase === 'lobby' && w.length) {
+              const sig = (this.state.handNumber || 0) + '|' + w.map(x => String(x.id) + ':' + String(x.amount)).join(',');
+              if (sig !== this.lastWinnersSig) {
+                this.lastWinnersSig = sig;
+                this.lastHandSnapshot = {
+                  winnersLastHand: JSON.parse(JSON.stringify(w)),
+                  lastHandRecord: this.state.lastHandRecord ? JSON.parse(JSON.stringify(this.state.lastHandRecord)) : null
+                };
+                this.showLastHand = true;
+                if (this.lastHandRevealTimer) clearTimeout(this.lastHandRevealTimer);
+                this.lastHandRevealTimer = setTimeout(() => {
+                  this.lastHandRevealTimer = null;
+                  this.showLastHand = false;
+                }, 5000);
+              }
+            }
+            if (this.state.handNumber === 0 && this.state.phase === 'lobby' && !w.length && !this.state.gameEnded) {
+              this.lastHandSnapshot = null;
+              this.lastWinnersSig = '';
+            }
           }
           if (m.type === 'error') this.showToast(m.message);
           if (m.type === 'pong') this.latencyMs = Math.max(0, Date.now() - m.t);

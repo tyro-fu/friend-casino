@@ -33,6 +33,7 @@ app.use(express.static(publicDir));
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
+const LAST_HAND_DISPLAY_MS = 5000;
 
 function scoringFromConfig() {
   const c = getConfig();
@@ -82,13 +83,14 @@ function scheduleAutoStart(room, seconds) {
         if (room.table.canStartHand(false)) {
           const res = room.table.startHand(false);
           if (res.ok) {
+            room.nextHandNotBefore = 0;
             R.pushState(room);
             checkHandEnd(room);
           } else {
             R.pushState(room);
           }
         } else if (room.table.canStartHand(true)) {
-          scheduleAutoStart(room, 5);
+          scheduleAutoStart(room, Math.ceil(LAST_HAND_DISPLAY_MS / 1000));
         } else {
           R.pushState(room);
         }
@@ -113,7 +115,8 @@ function checkHandEnd(room) {
         return;
       }
     }
-    scheduleAutoStart(room, 5);
+    room.nextHandNotBefore = Date.now() + LAST_HAND_DISPLAY_MS;
+    scheduleAutoStart(room, Math.ceil(LAST_HAND_DISPLAY_MS / 1000));
   }
 }
 
@@ -214,7 +217,6 @@ wss.on('connection', (ws) => {
         return;
       }
       if (type === 'startHand') {
-        clearAutoStart(room);
         if (room.gameEnded) {
           R.send(ws, { type: 'error', message: '本场游戏已结束，房主可点击"开始新一场"' });
           return;
@@ -223,11 +225,18 @@ wss.on('connection', (ws) => {
           R.send(ws, { type: 'error', message: '仅房主可开局' });
           return;
         }
+        if (room.nextHandNotBefore && Date.now() < room.nextHandNotBefore) {
+          const sec = Math.ceil((room.nextHandNotBefore - Date.now()) / 1000);
+          R.send(ws, { type: 'error', message: `上局结果展示中，请等待约 ${sec} 秒` });
+          return;
+        }
+        clearAutoStart(room);
         const res = room.table.startHand(true);
         if (!res.ok) {
           R.send(ws, { type: 'error', message: res.error });
           return;
         }
+        room.nextHandNotBefore = 0;
         R.pushState(room);
         checkHandEnd(room);
         return;
@@ -287,6 +296,7 @@ wss.on('connection', (ws) => {
           return;
         }
         clearAutoStart(room);
+        room.nextHandNotBefore = 0;
         room.gameEnded = false;
         room.scheduledEndHands = null;
         room.table.sessionBuyIns.clear();

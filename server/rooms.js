@@ -24,7 +24,8 @@ function getOrCreateRoom(code, scoring) {
       scheduledEndHands: null,
       gameEnded: false,
       autoStartCountdown: 0,
-      autoStartTimer: null
+      autoStartTimer: null,
+      nextHandNotBefore: 0
     };
     rooms.set(code, r);
   }
@@ -80,6 +81,7 @@ function pushState(room) {
   for (const [pid, c] of room.clients) {
     const st = room.table.publicState(pid);
     st.autoStartCountdown = room.autoStartCountdown || 0;
+    st.nextHandNotBefore = room.nextHandNotBefore || 0;
     st.scheduledEndHands = room.scheduledEndHands;
     st.gameEnded = room.gameEnded || false;
     send(c.ws, { type: 'state', payload: st });
