@@ -384,7 +384,7 @@ class PokerTable {
     this.lastShowdown = { board: this.board.slice(), players };
   }
 
-  captureLastHandRecord() {
+  captureLastHandRecord(isShowdown) {
     const players = [];
     for (const [id, startChips] of this.chipsAtHandStart) {
       const p = this.players.get(id);
@@ -403,7 +403,25 @@ class PokerTable {
       pot: this.pot,
       board: this.board.slice(),
       players,
-      winners: this.winnersLastHand.slice()
+      winners: this.winnersLastHand.slice(),
+      isShowdown: !!isShowdown
+    };
+  }
+
+  lastHandRecordFor(forPlayerId) {
+    const rec = this.lastHandRecord;
+    if (!rec) return null;
+    return {
+      handNumber: rec.handNumber,
+      pot: rec.pot,
+      board: rec.board,
+      winners: rec.winners,
+      isShowdown: rec.isShowdown,
+      players: rec.players.map((p) => {
+        if (rec.isShowdown && !p.folded) return p;
+        if (p.id === forPlayerId) return p;
+        return { id: p.id, nickname: p.nickname, seat: p.seat, cards: [], folded: p.folded, chipChange: p.chipChange };
+      })
     };
   }
 
@@ -429,7 +447,7 @@ class PokerTable {
     this.winnersLastHand = [{ id: winner.id, nickname: winner.nickname, amount: total, hand: '对手弃牌' }];
     this.lastHandLog = { pot: total, winners: this.winnersLastHand.slice() };
     this.captureShowdown();
-    this.captureLastHandRecord();
+    this.captureLastHandRecord(false);
     this.pot = 0;
     this.persistHandStats();
     this.endHand();
@@ -481,7 +499,7 @@ class PokerTable {
     const totalPot = this.pot;
     this.lastHandLog = { pot: totalPot, winners: this.winnersLastHand.slice(), board: this.board.slice() };
     this.captureShowdown();
-    this.captureLastHandRecord();
+    this.captureLastHandRecord(true);
     this.pot = 0;
     this.persistHandStats();
     this.endHand();
@@ -650,7 +668,7 @@ class PokerTable {
       },
       legalActions: forPlayerId ? this.legalActions(forPlayerId) : [],
       lastShowdown: this.lastShowdown,
-      lastHandRecord: this.lastHandRecord,
+      lastHandRecord: this.lastHandRecordFor(forPlayerId),
       handNumber: this.handNumber,
       sessionStats: this.getSessionStats()
     };
