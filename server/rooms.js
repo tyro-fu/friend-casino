@@ -25,7 +25,9 @@ function getOrCreateRoom(code, scoring) {
       gameEnded: false,
       autoStartCountdown: 0,
       autoStartTimer: null,
-      nextHandNotBefore: 0
+      nextHandNotBefore: 0,
+      // 断线宽限期：playerId -> setTimeout handle（大厅阶段）
+      disconnectTimers: new Map()
     };
     rooms.set(code, r);
   }
@@ -33,10 +35,42 @@ function getOrCreateRoom(code, scoring) {
 }
 
 function deleteRoom(code) {
+  const r = rooms.get(code);
+  if (r) {
+    // 清理所有宽限期定时器
+    for (const t of r.disconnectTimers.values()) clearTimeout(t);
+    r.disconnectTimers.clear();
+  }
   rooms.delete(code);
   try {
     db.deleteRoomRow(code);
   } catch (e) {}
+}
+
+// 断线宽限期：大厅阶段延迟 LOBBY_GRACE_MS 后再踢人，进行中局直接标记离线
+const LOBBY_GRACE_MS = 60000; // 60秒宽限
+
+/**
+ * 大厅断线宽限期：延迟后再从房间移除玩家
+ * @param {object} room
+ * @param {string} playerId
+ * @param {function} removeFn 超时后执行的清理回调
+ */
+function scheduleDisconnect(room, playerId, removeFn) {
+  cancelDisconnect(room, playerId);
+  const t = setTimeout(() => {
+    room.disconnectTimers.delete(playerId);
+    removeFn();
+  }, LOBBY_GRACE_MS);
+  room.disconnectTimers.set(playerId, t);
+}
+
+function cancelDisconnect(room, playerId) {
+  const t = room.disconnectTimers.get(playerId);
+  if (t != null) {
+    clearTimeout(t);
+    room.disconnectTimers.delete(playerId);
+  }
 }
 
 function setRoomPassword(room, plain) {
@@ -105,5 +139,8 @@ module.exports = {
   attachClient,
   detachClient,
   pushState,
-  ensurePlayerId
+  ensurePlayerId,
+  scheduleDisconnect,
+  cancelDisconnect,
+  LOBBY_GRACE_MS
 };

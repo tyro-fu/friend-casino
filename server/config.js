@@ -61,4 +61,40 @@ function reloadConfig() {
   return cached;
 }
 
-module.exports = { getConfig, reloadConfig, CONFIG_PATH, DEFAULTS };
+// ── 配置热加载监听 ──────────────────────────────────────────────
+// 监听 game.json 变化，自动重载缓存，并通过回调通知调用方
+// 使用防抖（300ms），避免编辑器保存时触发多次
+let _changeCallbacks = [];
+let _debounceTimer = null;
+
+function onConfigChange(fn) {
+  if (typeof fn === 'function') _changeCallbacks.push(fn);
+}
+
+function _notifyChange(newCfg) {
+  for (const fn of _changeCallbacks) {
+    try { fn(newCfg); } catch (e) {}
+  }
+}
+
+try {
+  fs.watch(CONFIG_PATH, { persistent: false }, (event) => {
+    if (event !== 'change' && event !== 'rename') return;
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(() => {
+      _debounceTimer = null;
+      const prev = JSON.stringify(cached);
+      const next = readGameConfig();
+      const nextStr = JSON.stringify(next);
+      if (nextStr !== prev) {
+        cached = next;
+        console.log('[config] game.json 已重载:', JSON.stringify(next.scoring));
+        _notifyChange(next);
+      }
+    }, 300);
+  });
+} catch (e) {
+  // 文件不存在或 watch 不支持时静默忽略
+}
+
+module.exports = { getConfig, reloadConfig, onConfigChange, CONFIG_PATH, DEFAULTS };

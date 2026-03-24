@@ -2,9 +2,10 @@ const path = require('path');
 const http = require('http');
 const express = require('express');
 const WebSocket = require('ws');
-const { getConfig, reloadConfig } = require('./config');
+const { getConfig, reloadConfig, onConfigChange } = require('./config');
 const db = require('./db');
 const R = require('./rooms');
+const { scheduleDisconnect, cancelDisconnect } = R;
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
@@ -34,6 +35,30 @@ app.use(express.static(publicDir));
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 const LAST_HAND_DISPLAY_MS = 5000;
+
+// ── 服务端心跳探活 ──────────────────────────────────────────────
+// 每 HEARTBEAT_INTERVAL_MS 向客户端发一次 ping（WebSocket 原生帧）
+// 若客户端在 HEARTBEAT_TIMEOUT_MS 内无响应，则主动断开连接
+const HEARTBEAT_INTERVAL_MS = 30000;
+const HEARTBEAT_TIMEOUT_MS  = 10000;
+
+const heartbeatTimer = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws._hbDead) {
+      // 上轮 ping 无响应，主动终止
+      return ws.terminate();
+    }
+    ws._hbDead = true;
+    // 发出原生 WebSocket ping 帧（客户端浏览器自动回 pong，无需 JS 处理）
+    try { ws.ping(); } catch (e) {}
+    // 额外发送应用层 heartbeat 消息（兼容无原生 pong 场景）
+    if (ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify({ type: 'heartbeat', t: Date.now() })); } catch (e) {}
+    }
+  });
+}, HEARTBEAT_INTERVAL_MS);
+
+wss.on('close', () => clearInterval(heartbeatTimer));
 
 function scoringFromConfig() {
   const c = getConfig();
@@ -123,7 +148,13 @@ function checkHandEnd(room) {
 wss.on('connection', (ws) => {
   let room = null;
   let playerId = null;
+
+  // 心跳：收到原生 pong 帧时重置 dead 标记
+  ws.on('pong', () => { ws._hbDead = false; });
+
   ws.on('message', (raw) => {
+    // 收到任意消息即视为存活
+    ws._hbDead = false;
     let msg;
     try {
       msg = JSON.parse(String(raw));
@@ -136,6 +167,10 @@ wss.on('connection', (ws) => {
     try {
       if (type === 'ping') {
         R.send(ws, { type: 'pong', t: msg.t != null ? msg.t : Date.now() });
+        return;
+      }
+      // 客户端回复心跳 ack（应用层，可选）
+      if (type === 'heartbeat_ack') {
         return;
       }
       if (type === 'createRoom') {
@@ -187,6 +222,8 @@ wss.on('connection', (ws) => {
           existing.connected = true;
           if (nick && nick !== '玩家') existing.nickname = nick.slice(0, 24);
           room = r;
+          // 取消宽限期定时器（玩家已重连）
+          cancelDisconnect(room, playerId);
           R.attachClient(room, ws, playerId, existing.nickname);
           R.send(ws, { type: 'joined', roomCode: code, playerId, shareUrl: `/room.html#${code}`, isHost: r.hostPlayerId === playerId });
           R.pushState(room);
@@ -319,13 +356,58 @@ wss.on('connection', (ws) => {
     const p = room.table.players.get(playerId);
     if (p) p.connected = false;
     R.detachClient(room, playerId);
+
     if (room.table.phase === 'lobby') {
-      room.table.removePlayer(playerId);
-      if (room.table.players.size === 0) {
-        R.deleteRoom(room.code);
+      // 大厅阶段：启动宽限期，60秒内未重连才真正踢出
+      scheduleDisconnect(room, playerId, () => {
+        room.table.removePlayer(playerId);
+        // 如果是房主，尝试转让给在线玩家
+        if (room.hostPlayerId === playerId) {
+          const next = [...room.table.players.values()].find(pl => pl.connected);
+          if (next) {
+            room.hostPlayerId = next.id;
+            // 通知新房主
+            const nc = room.clients.get(next.id);
+            if (nc) R.send(nc.ws, { type: 'hostTransferred', message: '原房主已离线，你已成为新房主' });
+          }
+        }
+        if (room.table.players.size === 0) {
+          R.deleteRoom(room.code);
+        } else {
+          R.pushState(room);
+        }
+      });
+    } else {
+      // 游戏进行中：仅标记离线，不移除
+      // 若是房主断线，宽限30秒后转让（游戏继续）
+      if (room.hostPlayerId === playerId) {
+        scheduleDisconnect(room, playerId, () => {
+          const next = [...room.table.players.values()].find(pl => pl.connected && pl.id !== playerId);
+          if (next) {
+            room.hostPlayerId = next.id;
+            const nc = room.clients.get(next.id);
+            if (nc) R.send(nc.ws, { type: 'hostTransferred', message: '原房主已离线，你已成为新房主' });
+            R.pushState(room);
+          }
+        });
       }
     }
     R.pushState(room);
+  });
+});
+
+// ── 配置热加载：变更时通知所有在线客户端 ──────────────────────
+onConfigChange((newCfg) => {
+  // 广播配置变更通知给所有在线连接（不含正在进行中的房间，避免干扰游戏）
+  const notice = JSON.stringify({
+    type: 'configChanged',
+    gameName: newCfg.gameName,
+    message: '服务器配置已更新，新建房间将使用新规则；当前局完成后自动生效。'
+  });
+  wss.clients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try { ws.send(notice); } catch (e) {}
+    }
   });
 });
 

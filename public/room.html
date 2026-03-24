@@ -275,6 +275,10 @@
       guide: false,
       latencyMs: '—',
       ws: null,
+      _reconnectTimer: null,
+      _reconnectAttempts: 0,
+      _reconnectPaused: false,
+      _heartbeatTimer: null,
       showLastHand: false,
       showSchedule: false,
       showStats: false,
@@ -346,6 +350,9 @@
     beforeDestroy() {
       if (this._uiTick) clearInterval(this._uiTick);
       if (this.lastHandRevealTimer) clearTimeout(this.lastHandRevealTimer);
+      if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+      this._stopHeartbeat();
+      this._reconnectPaused = true;
     },
     mounted() {
       fetch('/api/config').then(r => r.json()).then(c => {
@@ -383,8 +390,20 @@
           return;
         }
         if (this.ws) { try { this.ws.close(); } catch (e) {} }
+
+        // 保存重连时需要的参数
+        if (typeof onOpenSend === 'function') this._pendingOnOpen = onOpenSend;
+
         this.ws = new WebSocket(url);
-        this.ws.onopen = () => { if (typeof onOpenSend === 'function') onOpenSend(); };
+        this.ws.onopen = () => {
+          this._reconnectAttempts = 0;
+          this._reconnectPaused = false;
+          this._startHeartbeat();
+          if (typeof this._pendingOnOpen === 'function') {
+            this._pendingOnOpen();
+            this._pendingOnOpen = null;
+          }
+        };
         this.ws.onmessage = (ev) => {
           let m;
           try { m = JSON.parse(ev.data); } catch (e) { return; }
@@ -395,6 +414,10 @@
             if (typeof m.isHost === 'boolean') this.isHost = m.isHost;
             localStorage.setItem('poker_pid', m.playerId);
             history.replaceState(null, '', '/room.html#' + m.roomCode);
+          }
+          if (m.type === 'hostTransferred') {
+            this.isHost = true;
+            this.showToast(m.message || '你已成为新房主');
           }
           if (m.type === 'state') {
             this.state = m.payload;
@@ -422,14 +445,143 @@
               this.lastWinnersSig = '';
             }
           }
+          if (m.type === 'heartbeat') {
+            // 回复应用层心跳 ack，并重置客户端心跳计时
+            try { this.ws.send(JSON.stringify({ type: 'heartbeat_ack', t: m.t })); } catch (e) {}
+            this._resetHeartbeat();
+          }
+          if (m.type === 'configChanged') {
+            if (m.gameName) { this.gameName = m.gameName; document.title = m.gameName + ' · 牌桌'; }
+            this.showToast(m.message || '配置已更新，新局生效');
+          }
           if (m.type === 'error') this.showToast(m.message);
           if (m.type === 'pong') this.latencyMs = Math.max(0, Date.now() - m.t);
         };
         this.ws.onclose = () => {
-          if (this.inRoom) this.showToast('连接已断开');
-          this.inRoom = false;
+          this._stopHeartbeat();
+          if (this.inRoom && !this._reconnectPaused) {
+            this._scheduleReconnect();
+          } else if (!this.inRoom) {
+            // 未进入房间时（建立连接阶段失败），仅提示
+            this.showToast('连接失败');
+          }
         };
-        this.ws.onerror = () => { this.showToast('连接失败'); };
+        this.ws.onerror = () => { /* onclose 会随后触发，无需重复处理 */ };
+      },
+
+      // ── 自动重连（指数退避，最大 30 秒间隔）────────────────────
+      _scheduleReconnect() {
+        if (this._reconnectTimer) return;
+        const MAX_ATTEMPTS = 10;
+        if (this._reconnectAttempts >= MAX_ATTEMPTS) {
+          this.showToast('无法重新连接，请刷新页面');
+          this.inRoom = false;
+          return;
+        }
+        const delay = Math.min(1000 * Math.pow(1.5, this._reconnectAttempts), 30000);
+        this._reconnectAttempts++;
+        this.showToast(`连接断开，${Math.round(delay / 1000)}秒后自动重连…`);
+        this._reconnectTimer = setTimeout(() => {
+          this._reconnectTimer = null;
+          if (this._reconnectPaused) return;
+          // 重连时用保存的房间号和玩家ID重新加入
+          const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+          this.ws = new WebSocket(proto + '//' + location.host);
+          this.ws.onopen = () => {
+            this._startHeartbeat();
+            this._reconnectAttempts = 0;
+            // 重新加入房间
+            const payload = {
+              type: 'joinRoom',
+              roomCode: this.roomCode,
+              password: '', // 宽限期内服务端通过 playerId 识别，密码留空仍可重进
+              nickname: localStorage.getItem('poker_nick') || '玩家',
+              playerId: this.playerId
+            };
+            try { this.ws.send(JSON.stringify(payload)); } catch (e) {}
+          };
+          this.ws.onmessage = this.ws.onmessage; // 复用同一消息处理
+          // 递归绑定（重用同一套回调）
+          const self = this;
+          this.ws.onmessage = (ev) => {
+            // 直接调用原有 onmessage 逻辑（通过触发 connectWs 使用新 ws）
+            let m;
+            try { m = JSON.parse(ev.data); } catch (e) { return; }
+            if (m.type === 'joined') {
+              self.inRoom = true;
+              self.roomCode = m.roomCode;
+              self.playerId = m.playerId;
+              if (typeof m.isHost === 'boolean') self.isHost = m.isHost;
+              localStorage.setItem('poker_pid', m.playerId);
+              history.replaceState(null, '', '/room.html#' + m.roomCode);
+              self.showToast('已重新连接');
+            }
+            if (m.type === 'hostTransferred') {
+              self.isHost = true;
+              self.showToast(m.message || '你已成为新房主');
+            }
+            if (m.type === 'state') {
+              self.state = m.payload;
+              const p = (self.state.players || []).find(x => x.isYou);
+              if (p) self.raiseTo = Math.min(self.maxRaiseTo, Math.max(self.minRaiseTo, (self.state.currentBet || 0) + (self.state.scoring && self.state.scoring.bigBlind)));
+              const w = self.state.winnersLastHand || [];
+              if (self.state.phase === 'lobby' && w.length) {
+                const sig = (self.state.handNumber || 0) + '|' + w.map(x => String(x.id) + ':' + String(x.amount)).join(',');
+                if (sig !== self.lastWinnersSig) {
+                  self.lastWinnersSig = sig;
+                  self.lastHandSnapshot = {
+                    winnersLastHand: JSON.parse(JSON.stringify(w)),
+                    lastHandRecord: self.state.lastHandRecord ? JSON.parse(JSON.stringify(self.state.lastHandRecord)) : null
+                  };
+                  self.showLastHand = true;
+                }
+              }
+            }
+            if (m.type === 'heartbeat') {
+              try { self.ws.send(JSON.stringify({ type: 'heartbeat_ack', t: m.t })); } catch (e) {}
+              self._resetHeartbeat();
+            }
+            if (m.type === 'configChanged') {
+              if (m.gameName) { self.gameName = m.gameName; document.title = m.gameName + ' · 牌桌'; }
+              self.showToast(m.message || '配置已更新，新局生效');
+            }
+            if (m.type === 'error') {
+              self.showToast(m.message);
+              // 密码错误等致命错误，停止重连
+              if (m.message && (m.message.includes('密码') || m.message.includes('不存在'))) {
+                self._reconnectPaused = true;
+                self.inRoom = false;
+              }
+            }
+            if (m.type === 'pong') self.latencyMs = Math.max(0, Date.now() - m.t);
+          };
+          this.ws.onclose = () => {
+            self._stopHeartbeat();
+            if (self.inRoom && !self._reconnectPaused) {
+              self._scheduleReconnect();
+            }
+          };
+          this.ws.onerror = () => {};
+        }, delay);
+      },
+
+      // ── 客户端心跳（30秒发一次 ping，60秒无响应则主动重连）──────
+      _startHeartbeat() {
+        this._stopHeartbeat();
+        this._heartbeatTimer = setInterval(() => {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            try { this.ws.send(JSON.stringify({ type: 'ping', t: Date.now() })); } catch (e) {}
+          }
+        }, 30000);
+      },
+      _stopHeartbeat() {
+        if (this._heartbeatTimer) {
+          clearInterval(this._heartbeatTimer);
+          this._heartbeatTimer = null;
+        }
+      },
+      _resetHeartbeat() {
+        // 收到服务端心跳，重置计时（目前客户端心跳是间隔发送，无需特别重置）
       },
       submitJoin() {
         const nick = (this.joinNick || '玩家').slice(0, 24);
