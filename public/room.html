@@ -48,7 +48,7 @@
             <span class="pot-label">底池</span>
             <span class="pot-value">{{ state.pot || 0 }}</span>
           </div>
-          <div class="board-cards">
+          <div class="board-cards" v-if="state.phase === 'playing'">
             <span v-for="(c,i) in boardDisplay" :key="'b'+i" class="card-b" :class="{red:isRed(c)}">{{ fmtCard(c) }}</span>
           </div>
           <div v-if="state.phase === 'playing'" class="street-tag">{{ streetLabel }} · 当前注 {{ state.currentBet || 0 }}</div>
@@ -71,7 +71,7 @@
             <div class="dealer-badge" v-if="p.seat === state.dealerSeat">D</div>
             <div class="seat-name">{{ p.nickname }}<span v-if="p.isYou" class="you-tag">你</span></div>
             <div class="seat-chips">{{ p.chips }}</div>
-            <div class="seat-cards" v-if="p.cards && p.cards.length">
+            <div class="seat-cards" v-if="state.phase === 'playing' && p.cards && p.cards.length">
               <span v-for="(c,j) in p.cards" :key="j"
                 class="card-s" :class="{red:c&&!c.hidden&&isRed(c),hidden:c&&c.hidden}">{{ c&&c.hidden?'?':fmtCard(c) }}</span>
             </div>

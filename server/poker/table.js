@@ -2,9 +2,8 @@ const { createDeck, shuffle } = require('./deck');
 const { bestOf7, compareEval, evalLabel } = require('./evaluate');
 
 function showCards(table, p, forPlayerId) {
-  if (table.phase === 'lobby' && table.lastShowdown) {
-    const e = table.lastShowdown.players.find((x) => x.id === p.id);
-    if (e && e.cards.length) return e.cards;
+  if (table.phase === 'lobby') {
+    return [];
   }
   if (table.phase === 'playing' && p.id !== forPlayerId) {
     return p.holeCards.length ? [{ hidden: true }, { hidden: true }] : [];
@@ -705,7 +704,7 @@ class PokerTable {
         maxBetPerRound: scoring.maxBetPerRound
       },
       legalActions: forPlayerId ? this.legalActions(forPlayerId) : [],
-      lastShowdown: this.lastShowdown,
+      lastShowdown: this.phase === 'lobby' ? null : this.lastShowdown,
       lastHandRecord: this.lastHandRecordFor(forPlayerId),
       handNumber: this.handNumber,
       sessionStats: this.getSessionStats(),
