@@ -1,4 +1,4 @@
-# Render 免费 Web Service（Docker）。无持久盘：排行榜/SQLite 在重部署或休眠恢复后可能清空，适合朋友临时玩。
+# Render 免费 Web Service（Docker）。无持久盘：SQLite（房间密码等）在重部署后可能清空；本场牌局在内存中，适合朋友临时玩。
 # 使用：New → Blueprint → 选仓库。
 version: "1"
 services:

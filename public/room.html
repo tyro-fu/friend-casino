@@ -107,6 +107,11 @@
           </div>
         </div>
       </div>
+      <div class="play-hud" v-if="state.phase === 'playing'">
+        <span class="hud-pot">底池 {{ state.pot || 0 }}</span>
+        <span class="hud-street">{{ streetLabel }} · 当前注 {{ state.currentBet || 0 }}</span>
+        <span v-if="legal.length" class="hud-your-turn">▶ 轮到你了</span>
+      </div>
       <div class="card rebuy-card" v-if="state.phase === 'lobby' && !state.gameEnded && myPlayer && myPlayer.chips === 0">
         <div class="rebuy-title">局内买入</div>
         <p class="hint" style="margin:0 0 8px">积分已清零，买入≥200 后可参与下一局自动开局；若房主强制开局，本局仅观战。</p>
@@ -162,12 +167,13 @@
           <h2>🎯 本场游戏结束</h2>
           <p class="hint" style="margin:0 0 12px">共进行 {{ state.handNumber }} 手</p>
           <table class="stats-table">
-            <thead><tr><th>玩家</th><th>买入</th><th>剩余</th><th>盈亏</th></tr></thead>
+            <thead><tr><th>玩家</th><th>买入</th><th>剩余</th><th>局数</th><th>盈亏</th></tr></thead>
             <tbody>
               <tr v-for="s in sessionStats" :key="s.id">
                 <td>{{ s.nickname }}</td>
                 <td>{{ s.buyIn }}</td>
                 <td>{{ s.chips }}</td>
+                <td>{{ s.handsPlayed != null ? s.handsPlayed : 0 }}</td>
                 <td :class="{'profit': s.profit > 0, 'loss': s.profit < 0}">
                   <strong>{{ s.profit > 0 ? '+' : '' }}{{ s.profit }}</strong>
                 </td>
@@ -185,12 +191,13 @@
           <h2>本场统计</h2>
           <p class="hint" style="margin:0 0 8px">已进行 {{ state.handNumber }} 手</p>
           <table class="stats-table">
-            <thead><tr><th>玩家</th><th>买入</th><th>剩余</th><th>盈亏</th></tr></thead>
+            <thead><tr><th>玩家</th><th>买入</th><th>剩余</th><th>局数</th><th>盈亏</th></tr></thead>
             <tbody>
               <tr v-for="s in sessionStats" :key="s.id">
                 <td>{{ s.nickname }}</td>
                 <td>{{ s.buyIn }}</td>
                 <td>{{ s.chips }}</td>
+                <td>{{ s.handsPlayed != null ? s.handsPlayed : 0 }}</td>
                 <td :class="{'profit': s.profit > 0, 'loss': s.profit < 0}">
                   <strong>{{ s.profit > 0 ? '+' : '' }}{{ s.profit }}</strong>
                 </td>
@@ -230,8 +237,8 @@
             <li>「下注/加注」填写<strong>本轮累计目标总下注额</strong>，可使用滑块或快捷按钮。</li>
             <li>入座时可填带入积分（≥200，不设上限）；留空则用配置默认。</li>
             <li>一局结束后将自动开始下一局（5秒倒计时）。</li>
-            <li>房主可预约结束：设置几局后结束，届时自动展示盈亏统计。</li>
-            <li>积分变动在每局结束后写入排行榜。</li>
+            <li>房主可预约结束：设置几局后结束，届时自动展示本场盈亏统计。</li>
+            <li>「本场统计」仅统计当前房间本场次：买入、已玩局数与盈亏；不跨房间、不长期存档。</li>
           </ul>
           <button type="button" @click="guide = false">关闭</button>
         </div>
@@ -287,7 +294,8 @@
       lastWinnersSig: '',
       lastHandRevealTimer: null,
       _uiTick: null,
-      tickSec: 0
+      tickSec: 0,
+      winSize: { w: typeof window !== 'undefined' ? window.innerWidth : 0, h: typeof window !== 'undefined' ? window.innerHeight : 0 }
     },
     watch: {
       inRoom(v) {
@@ -328,6 +336,7 @@
         return Math.min(p.betStreet + p.chips, cap);
       },
       tablePlayers() {
+        void this.winSize.w;
         const ps = (this.state.players || []).slice();
         if (!ps.length) return [];
         ps.sort((a, b) => a.seat - b.seat);
@@ -351,6 +360,7 @@
       if (this._uiTick) clearInterval(this._uiTick);
       if (this.lastHandRevealTimer) clearTimeout(this.lastHandRevealTimer);
       if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+      if (this._onResize) window.removeEventListener('resize', this._onResize);
       this._stopHeartbeat();
       this._reconnectPaused = true;
     },
@@ -358,6 +368,9 @@
       fetch('/api/config').then(r => r.json()).then(c => {
         if (c.gameName) { this.gameName = c.gameName; document.title = c.gameName + ' · 牌桌'; }
       }).catch(() => {});
+      this._onResize = () => { this.winSize = { w: window.innerWidth, h: window.innerHeight }; };
+      window.addEventListener('resize', this._onResize);
+      this._onResize();
       this.createMode = qs('create') === '1';
       this.joinNick = (qs('nick') || localStorage.getItem('poker_nick') || '玩家').slice(0, 24);
       this.joinPwd = qs('pwd');
@@ -623,8 +636,13 @@
       seatStyle(displayIndex, totalSeats) {
         if (totalSeats <= 0) return {};
         const angle = (2 * Math.PI * displayIndex) / totalSeats;
-        var rx, ry;
-        if (window.innerWidth <= 480) { rx = 40; ry = 40; } else { rx = 43; ry = 40; }
+        const w = this.winSize.w || window.innerWidth;
+        const h = this.winSize.h || window.innerHeight;
+        const landCompact = w > h && h <= 480;
+        let rx; let ry;
+        if (landCompact) { rx = 45; ry = 33; }
+        else if (w <= 480) { rx = 41; ry = 41; }
+        else { rx = 43; ry = 40; }
         return {
           left: (50 + rx * Math.sin(angle)) + '%',
           top: (50 + ry * Math.cos(angle)) + '%'

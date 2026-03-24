@@ -55,6 +55,7 @@ class PokerTable {
     this.lastShowdown = null;
     this.handNumber = 0;
     this.sessionBuyIns = new Map();
+    this.sessionHandsPlayed = new Map();
     this.lastHandRecord = null;
   }
 
@@ -470,6 +471,7 @@ class PokerTable {
         seat: p.seat,
         chips: p.chips,
         buyIn,
+        handsPlayed: this.sessionHandsPlayed.get(id) || 0,
         profit: p.chips - buyIn
       });
     }
@@ -484,7 +486,6 @@ class PokerTable {
     this.captureShowdown();
     this.captureLastHandRecord(false);
     this.pot = 0;
-    this.persistHandStats();
     this.endHand();
   }
 
@@ -536,19 +537,13 @@ class PokerTable {
     this.captureShowdown();
     this.captureLastHandRecord(true);
     this.pot = 0;
-    this.persistHandStats();
     this.endHand();
   }
 
-  persistHandStats() {
-    try {
-      const db = require('../db');
-      const deltas = this.handDeltasForStats();
-      if (deltas.length) db.recordHandDeltas(deltas);
-    } catch (e) {}
-  }
-
   endHand() {
+    for (const id of this.chipsAtHandStart.keys()) {
+      this.sessionHandsPlayed.set(id, (this.sessionHandsPlayed.get(id) || 0) + 1);
+    }
     this.phase = 'lobby';
     this.street = null;
     this.board = [];
@@ -718,20 +713,6 @@ class PokerTable {
         return { count: nicknames.length, nicknames };
       })()
     };
-  }
-
-  handDeltasForStats() {
-    const out = [];
-    for (const [id, start] of this.chipsAtHandStart.entries()) {
-      const p = this.players.get(id);
-      if (!p) continue;
-      out.push({
-        playerId: id,
-        nickname: p.nickname,
-        delta: p.chips - start
-      });
-    }
-    return out;
   }
 }
 

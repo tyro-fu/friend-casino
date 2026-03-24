@@ -15,6 +15,32 @@ const DEFAULTS = {
   }
 };
 
+function readPresets(file) {
+  const arr = file['规则预设'];
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const raw of arr) {
+    if (!raw || typeof raw !== 'object') continue;
+    const name = String(raw['名称'] || '').trim();
+    if (!name) continue;
+    const note = String(raw['说明'] || '').trim();
+    const r = raw;
+    out.push({
+      name,
+      note,
+      scoring: {
+        smallBlind: num(r['小盲注积分'], DEFAULTS.scoring.smallBlind),
+        bigBlind: num(r['大盲注积分'], DEFAULTS.scoring.bigBlind),
+        maxBetPerRound: num(r['每轮下注上限积分'], DEFAULTS.scoring.maxBetPerRound),
+        startingChips: num(r['初始筹码积分'], DEFAULTS.scoring.startingChips),
+        minPlayersToStart: num(r['单桌最少开局人数'], DEFAULTS.scoring.minPlayersToStart),
+        maxSeats: Math.min(9, Math.max(2, num(r['单桌最多座位数'], DEFAULTS.scoring.maxSeats)))
+      }
+    });
+  }
+  return out;
+}
+
 function readGameConfig() {
   let file = {};
   try {
@@ -29,8 +55,9 @@ function readGameConfig() {
     ? nameRaw.trim()
     : (process.env.GAME_NAME && String(process.env.GAME_NAME).trim()) || DEFAULTS.gameName;
   const hasRules = rules && typeof rules === 'object' && Object.keys(rules).length > 0;
+  const presets = readPresets(file);
   if (!hasRules) {
-    return { gameName, scoring: { ...DEFAULTS.scoring } };
+    return { gameName, scoring: { ...DEFAULTS.scoring }, presets };
   }
   return {
     gameName,
@@ -41,7 +68,8 @@ function readGameConfig() {
       startingChips: num(rules['初始筹码积分'], DEFAULTS.scoring.startingChips),
       minPlayersToStart: num(rules['单桌最少开局人数'], DEFAULTS.scoring.minPlayersToStart),
       maxSeats: Math.min(9, Math.max(2, num(rules['单桌最多座位数'], DEFAULTS.scoring.maxSeats)))
-    }
+    },
+    presets
   };
 }
 

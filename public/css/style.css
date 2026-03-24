@@ -237,7 +237,8 @@ button.danger { background: linear-gradient(180deg, #c0392b, #a93226); }
 }
 .act-btn {
   flex: 1; min-width: 0;
-  padding: 12px 8px; font-size: .95rem; font-weight: 700;
+  min-height: 48px;
+  padding: 14px 10px; font-size: .95rem; font-weight: 700;
   border-radius: 10px; margin-top: 0;
   text-align: center;
 }
@@ -288,7 +289,9 @@ button.danger { background: linear-gradient(180deg, #c0392b, #a93226); }
 .ctrl-row .sm { font-size: .8rem; padding: 7px 10px; }
 .start-btn {
   background: linear-gradient(180deg, #2a8f55, #1a7040);
-  font-size: 1rem; padding: 12px;
+  font-size: 1.05rem;
+  padding: 14px 12px;
+  min-height: 48px;
 }
 .start-btn:disabled {
   opacity: 0.55;
@@ -327,28 +330,65 @@ button.danger { background: linear-gradient(180deg, #c0392b, #a93226); }
   background: #c0392b; color: #fff; padding: 10px 16px; border-radius: 8px;
   z-index: 2000; font-size: .9rem; max-width: 90vw; text-align: center;
 }
-/* ===== 排行榜 ===== */
-.lb-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-.lb-table th, .lb-table td { padding: 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.08); }
+.card-title { font-size: 1rem; margin: 0 0 8px; font-weight: 600; }
+.rule-list { margin: 0; padding-left: 18px; font-size: .88rem; line-height: 1.55; color: var(--text); }
+.preset-block { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); }
+.preset-block:first-of-type { margin-top: 6px; padding-top: 0; border-top: none; }
+.preset-name { font-weight: 700; font-size: .92rem; }
+.preset-note { margin: 4px 0 6px !important; }
 .badge { font-size: .75rem; color: var(--muted); }
+.play-hud {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  background: rgba(21,37,53,.92);
+  border: 1px solid rgba(241,196,15,.22);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  font-size: .88rem;
+}
+.play-hud .hud-pot { font-weight: 700; color: var(--gold); }
+.play-hud .hud-street { color: var(--muted); }
+.play-hud .hud-your-turn {
+  margin-left: auto;
+  font-weight: 800;
+  color: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
 /* ===== 移动端适配 ===== */
 @media (max-width: 480px) {
   .wrap { padding: 8px; }
   .table-area { padding-bottom: 78%; margin: 25px 0 15px; }
   .table-felt { top: 8%; left: 4%; right: 4%; bottom: 8%; }
   .card-b { width: 32px; height: 44px; font-size: .72rem; }
-  .seat-box { min-width: 62px; padding: 4px 5px 5px; }
-  .seat-name { font-size: .65rem; max-width: 64px; }
+  .seat-box { min-width: 64px; padding: 6px 6px 7px; }
+  .seat-name { font-size: .65rem; max-width: 68px; }
   .seat-chips { font-size: .62rem; }
   .card-s { width: 24px; height: 32px; font-size: .58rem; }
   .seat-bet { font-size: .55rem; }
   .pot-value { font-size: 1rem; }
-  .actions { gap: 6px; }
-  .act-btn { padding: 10px 6px; font-size: .88rem; }
-  .quick-bets { gap: 4px; }
-  .qb { font-size: .65rem; padding: 5px 2px; }
+  .actions { gap: 8px; }
+  .act-btn { padding: 14px 8px; font-size: .9rem; min-height: 48px; }
+  .quick-bets { gap: 6px; }
+  .qb { font-size: .68rem; padding: 8px 4px; min-height: 40px; }
   .table-center { width: 55%; }
   .dealer-badge { width: 16px; height: 16px; font-size: .5rem; top: -6px; right: -6px; }
+  .action-card {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -8px 24px rgba(0,0,0,.35);
+  }
+  .bottom-ctrl { padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+}
+@media (orientation: landscape) and (max-height: 480px) {
+  .wrap { max-width: 960px; padding: 6px 10px; }
+  .table-area { padding-bottom: 52%; margin: 10px 0 8px; }
+  .table-felt { top: 6%; left: 10%; right: 10%; bottom: 6%; }
+  .table-center { width: 48%; }
+  .card-b { width: 30px; height: 42px; font-size: .7rem; }
+  .seat-box { min-width: 58px; padding: 4px 5px; }
+  .play-hud { padding: 6px 10px; font-size: .82rem; margin-bottom: 6px; }
 }
 @media (max-width: 360px) {
   .table-area { padding-bottom: 85%; }

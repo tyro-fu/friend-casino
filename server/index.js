@@ -19,16 +19,9 @@ app.get('/api/config', (req, res) => {
   const c = reloadConfig();
   res.json({
     gameName: c.gameName,
-    scoring: c.scoring
+    scoring: c.scoring,
+    presets: c.presets || []
   });
-});
-app.get('/api/leaderboard', (req, res) => {
-  try {
-    const rows = db.getLeaderboard(100);
-    res.json({ list: rows });
-  } catch (e) {
-    res.status(500).json({ error: 'leaderboard_failed' });
-  }
 });
 app.use(express.static(publicDir));
 
@@ -308,7 +301,6 @@ wss.on('connection', (ws) => {
           return;
         }
         R.pushState(room);
-        R.broadcast(room, { type: 'leaderboardTick' });
         checkHandEnd(room);
         return;
       }
@@ -337,6 +329,7 @@ wss.on('connection', (ws) => {
         room.gameEnded = false;
         room.scheduledEndHands = null;
         room.table.sessionBuyIns.clear();
+        room.table.sessionHandsPlayed.clear();
         room.table.handNumber = 0;
         room.table.lastHandRecord = null;
         room.table.winnersLastHand = [];

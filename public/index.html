@@ -10,7 +10,7 @@
   <div class="wrap" id="app">
     <div class="topbar">
       <h1>{{ gameName }}</h1>
-      <span class="badge">私密房间 · 本地积分</span>
+      <span class="badge">私密房间 · 本场统计</span>
     </div>
     <div class="card">
       <label>昵称（仅显示用）</label>
@@ -34,20 +34,27 @@
       <p class="hint">若只打开好友分享的链接（仅含房间号），进入页面后需在牌桌页填写房间密码。</p>
     </div>
     <div class="card">
-      <h1 style="font-size:1rem;margin-bottom:8px">积分排行榜（全局）</h1>
-      <table class="lb-table" v-if="lb.length">
-        <thead><tr><th>#</th><th>昵称</th><th>累计积分变动</th><th>局数</th></tr></thead>
-        <tbody>
-          <tr v-for="(r,i) in lb" :key="r.player_id">
-            <td>{{ i+1 }}</td>
-            <td>{{ r.nickname }}</td>
-            <td>{{ r.total_points }}</td>
-            <td>{{ r.hands_played }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <p v-else class="hint">暂无记录，完成一局后自动累计。</p>
-      <button type="button" class="secondary" @click="loadLb">刷新榜单</button>
+      <h2 class="card-title">当前生效规则</h2>
+      <p class="hint" style="margin-top:0">对局使用下列数值；修改 <code>config/game.json</code> 后由服务器重载（本机重启进程）。</p>
+      <ul class="rule-list" v-if="scoring">
+        <li>小盲 / 大盲：{{ scoring.smallBlind }} / {{ scoring.bigBlind }}</li>
+        <li>每轮下注上限：{{ scoring.maxBetPerRound }}</li>
+        <li>默认带入：{{ scoring.startingChips }}</li>
+        <li>开局人数：至少 {{ scoring.minPlayersToStart }} 人 · 单桌最多 {{ scoring.maxSeats }} 座</li>
+      </ul>
+    </div>
+    <div class="card" v-if="presets.length">
+      <h2 class="card-title">规则参考预设</h2>
+      <p class="hint" style="margin-top:0">以下为示例档位；要启用某一档，请将其中的数字合并进配置文件里的「积分统计规则」并保存。</p>
+      <div v-for="(pr, idx) in presets" :key="idx" class="preset-block">
+        <div class="preset-name">{{ pr.name }}</div>
+        <p v-if="pr.note" class="hint preset-note">{{ pr.note }}</p>
+        <ul class="rule-list" v-if="pr.scoring">
+          <li>小盲 / 大盲：{{ pr.scoring.smallBlind }} / {{ pr.scoring.bigBlind }}</li>
+          <li>每轮上限 {{ pr.scoring.maxBetPerRound }} · 默认带入 {{ pr.scoring.startingChips }}</li>
+          <li>至少 {{ pr.scoring.minPlayersToStart }} 人 · 最多 {{ pr.scoring.maxSeats }} 座</li>
+        </ul>
+      </div>
     </div>
     <p class="hint">推荐使用 Chrome / Firefox / Edge，支持手机浏览器横竖屏访问。</p>
   </div>
@@ -68,16 +75,17 @@
       joinPassword: '',
       buyIn: '',
       buyInJoin: '',
-      lb: []
+      scoring: null,
+      presets: []
     },
     mounted() {
-      fetch('/api/config').then(r => r.json()).then(c => { if (c.gameName) this.gameName = c.gameName; document.title = c.gameName; }).catch(() => {});
-      this.loadLb();
+      fetch('/api/config').then(r => r.json()).then(c => {
+        if (c.gameName) { this.gameName = c.gameName; document.title = c.gameName; }
+        this.scoring = c.scoring || null;
+        this.presets = Array.isArray(c.presets) ? c.presets : [];
+      }).catch(() => {});
     },
     methods: {
-      loadLb() {
-        fetch('/api/leaderboard').then(r => r.json()).then(j => { this.lb = j.list || []; }).catch(() => { this.lb = []; });
-      },
       buyInQuery(raw) {
         const b = (raw || '').trim();
         if (b === '') return '';
